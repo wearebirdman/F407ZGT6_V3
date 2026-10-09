@@ -1,0 +1,50 @@
+# ============================================================
+# STM32F407ZGT6_V3 - Git Ignore
+# ============================================================
+
+# ---------- Build outputs ----------
+/build/
+/bin/
+/obj/
+/out/
+/*.elf
+/*.hex
+/*.bin
+/*.map
+/*.lst
+/*.d
+
+# ---------- IDE / Editor ----------
+/.vscode/launch.json
+/.vscode/tasks.json
+/.vscode/settings.json
+/.settings/
+
+# ---------- EIDE ----------
+.eide/log/
+.eide.usr.ctx.json
+
+# ---------- STM32CubeIDE / Eclipse ----------
+.mxproject
+/.metadata/
+/.recommenders/
+*.launch
+
+# ---------- Clangd ----------
+.clangd
+compile_commands.json
+
+# ---------- EIDE templates ----------
+*.ept
+*.eide-template
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Backup ----------
+*~
+*.bak
+*.swp
+*.swo
