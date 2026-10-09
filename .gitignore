@@ -1,0 +1,38 @@
+# ========== 构建产物 ==========
+/build
+/bin
+/obj
+/out
+*.o
+*.d
+*.lst
+*.map
+*.elf
+*.hex
+*.bin
+
+# ========== EIDE 本地状态（eide.yml 与 files.options.yml 为工程配置，保留上传） ==========
+/.eide/log
+/.eide/debug.*
+/.eide.usr.ctx.json
+
+# ========== IDE / 编辑器（工程规范走 .clang-format 与 .clangd，不依赖 .vscode） ==========
+/.vscode/
+/.settings
+
+# ========== CubeMX 生成的 Makefile：EIDE 构建不使用，留在本地即可 ==========
+/Makefile
+
+# ========== 操作系统杂项 ==========
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========== 临时与备份文件 ==========
+*.bak
+*.orig
+*.swp
+
+# ========== eide template ==========
+*.ept
+*.eide-template
