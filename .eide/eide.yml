@@ -27,6 +27,7 @@ targets:
       defineList:
         - USE_HAL_DRIVER
         - STM32F407xx
+        - LV_CONF_INCLUDE_SIMPLE
       incList:
         - Core/Inc
         - Drivers/CMSIS/Include
@@ -45,8 +46,13 @@ targets:
         - APP/key
         - APP/lcd
         - APP/led
+        - APP/lvgl
         - APP/touch
         - APP/uart
+        - Middlewares/LVGL
+        - Middlewares/LVGL/lvgl
+        - Middlewares/LVGL/lvgl/include
+        - Middlewares/LVGL/lvgl/demos/widgets
       libList: []
     excludeList: []
     settings:
@@ -60,28 +66,25 @@ targets:
         options:
           version: 5
           afterBuildTasks: []
-          asm-compiler:
-            ASM_FLAGS: ""
+          asm-compiler: {}
           beforeBuildTasks: []
           c/cpp-compiler:
-            CXX_FLAGS: ""
-            C_FLAGS: ""
             language-c: c11
             language-cpp: c++11
             one-elf-section-per-data: true
             one-elf-section-per-function: true
-            optimization: level-debug
+            optimization: level-2
             warnings: all-warnings
           global:
             $float-abi-type: hard
-            misc-control: ""
+            arm-thumb-mode: thumb
             not-use-syscalls: true
             output-debug-info: enable
             use-newlib-nano: true
           linker:
             $outputTaskExcludes:
               - .bin
-            LD_FLAGS: ""
+            $toolName: auto
             LIB_FLAGS: -lm
             output-format: elf
             remove-unused-input-sections: true

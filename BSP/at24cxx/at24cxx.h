@@ -86,7 +86,7 @@
 #define EEPROM_SIZE_TOUCH_CAL 17 /* 触摸校准参数长度 */
 
 /* 示例代码开关 */
-#define AT24CXX_ENABLE_EXAMPLE 1 /* 1=启用示例代码，0=停用 */
+#define AT24CXX_ENABLE_EXAMPLE 0 /* 1=启用示例代码，0=停用 */
 
 /* 错误码定义 */
 typedef enum {

@@ -1,0 +1,3 @@
+# LVGL 上游源码保持原样，禁止工程格式化规则作用于本目录
+DisableFormat: true
+SortIncludes: Never

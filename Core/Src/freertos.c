@@ -76,7 +76,7 @@ const osThreadAttr_t Led_Disp_Task_attributes = {
 osThreadId_t Lcd_Disp_TaskHandle;
 const osThreadAttr_t Lcd_Disp_Task_attributes = {
   .name = "Lcd_Disp_Task",
-  .stack_size = 512 * 4,
+  .stack_size = 1536 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for Touch_Proc_Task */
@@ -170,7 +170,7 @@ void MX_FREERTOS_Init(void) {
   LedQueueHandle = osMessageQueueNew (4, sizeof(LedMsg_t), &LedQueue_attributes);
 
   /* creation of TouchQueue */
-  TouchQueueHandle = osMessageQueueNew (4, sizeof(TouchMsg_t), &TouchQueue_attributes);
+  TouchQueueHandle = osMessageQueueNew (16, sizeof(TouchMsg_t), &TouchQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */

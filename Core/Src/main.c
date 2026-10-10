@@ -32,7 +32,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,7 +53,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+/* CCMRAM 段边界符号（链接脚本 STM32F407xx_FLASH.ld 定义） */
+extern uint32_t _sccmram;
+extern uint32_t _eccmram;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -85,7 +87,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  /* CCMRAM 段清零：链接脚本仅定位段、无启动拷贝代码，使用前必须显式清零 */
+  memset((void *)&_sccmram, 0, (size_t)((uint8_t *)&_eccmram - (uint8_t *)&_sccmram));
   /* USER CODE END Init */
 
   /* Configure the system clock */

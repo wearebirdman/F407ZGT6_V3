@@ -11,14 +11,18 @@
 *.hex
 *.bin
 
-# ========== EIDE 本地状态（eide.yml 与 files.options.yml 为工程配置，保留上传） ==========
+# ========== EIDE 本地状态（eide.yml 与 files.options.yml 为工程配置，保留上传；env.ini 为本地环境覆写，EIDE 自动重建） ==========
 /.eide/log
 /.eide/debug.*
+/.eide/env.ini
 /.eide.usr.ctx.json
 
-# ========== IDE / 编辑器（工程规范走 .clang-format 与 .clangd，不依赖 .vscode） ==========
+# ========== IDE / 编辑器（工程规范走根目录 .clang-format，不依赖 .vscode） ==========
 /.vscode/
 /.settings
+# clangd 本地配置：含本机工具链绝对路径，换机需重生成；.cache 为其索引缓存
+/.clangd
+/.cache/
 
 # ========== CubeMX 生成的 Makefile：EIDE 构建不使用，留在本地即可 ==========
 /Makefile
