@@ -13,7 +13,7 @@ void Touch_Proc(void *argument)
     uint16_t lx = 0, ly = 0; /* 最后上报的屏幕坐标（HOLD 位移判定基准） */
 
 #if TOUCH_USE_EEPROM_CAL
-    AT24CXX_Init(); /* 检测 EEPROM 在位（I2C 句柄由 at24cxx.h 的 AT24CXX_I2C 宏指定） */
+    AT24Cxx_Init(); /* 检测 EEPROM 在位（I2C 句柄由 at24cxx.h 的 AT24CXX_I2C 宏指定） */
 #endif
     Touch_Init(); /* 内部加载 EEPROM 校准参数（未校准过则输出原始 AD 值） */
 

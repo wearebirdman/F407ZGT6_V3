@@ -21,8 +21,8 @@ void Lcd_Disp(void *argument)
     Lvgl_PortInit();   /* LVGL 移植初始化 */
 
 #if LV_USE_DEMO_WIDGETS
-    /* 官方控件演示页。换自有 UI 步骤：lv_conf.h 关 LV_USE_DEMO_WIDGETS 并把
-     * LV_MEM_SIZE 回调至 24~32KB → 删除本块与 demos 目录 → eide.yml 移除 demos include 路径 */
+    /* 简化版控件演示页。换自有 UI 步骤：lv_conf.h 关 LV_USE_DEMO_WIDGETS →
+     * 删除本块与 demos 目录 → eide.yml 移除 demos include 路径（池 32KB 可按 UI 占用再压） */
     lv_demo_widgets();
 #endif
 

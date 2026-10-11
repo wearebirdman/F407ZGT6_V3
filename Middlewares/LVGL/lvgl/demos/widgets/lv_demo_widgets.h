@@ -1,8 +1,3 @@
-/**
- * @file lv_demo_widgets.h
- *
- */
-
 #ifndef LV_DEMO_WIDGETS_H
 #define LV_DEMO_WIDGETS_H
 
@@ -10,50 +5,18 @@
 extern "C" {
 #endif
 
-/*********************
- *      INCLUDES
- *********************/
-#include "../lv_demos.h"
-#include "../../include/lvgl/draw/lv_draw.h"
-#include "../../include/lvgl/draw/lv_draw_triangle.h"
+#include "../../lvgl.h"
 
 #if LV_USE_DEMO_WIDGETS
 
-#if LV_USE_GRID == 0
-#error "LV_USE_GRID needs to be enabled"
-#endif
-
-#if LV_USE_FLEX == 0
-#error "LV_USE_FLEX needs to be enabled"
-#endif
-
-/*********************
- *      DEFINES
- *********************/
-
-/**********************
- *      TYPEDEFS
- **********************/
-
-/**********************
- * GLOBAL PROTOTYPES
- **********************/
+/* 简化控件演示（模板工程维护版）：替换官方 widgets demo，验证显示/触摸/事件链路
+ * 仅依赖默认字体 Montserrat 14，内置内存池 32KB 即可运行 */
 void lv_demo_widgets(void);
-void lv_demo_widgets_start_slideshow(void);
 
-/**
- * Create the widgets demo with custom arguments.
- * @param args Pointer to demo arguments structure containing the parent widget and other options.
- */
-void lv_demo_widgets_with_args(const lv_demo_args_t * args);
-/**********************
- *      MACROS
- **********************/
-
-#endif /*LV_USE_DEMO_WIDGETS*/
+#endif /* LV_USE_DEMO_WIDGETS */
 
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
 
-#endif /*LV_DEMO_WIDGETS_H*/
+#endif /* LV_DEMO_WIDGETS_H */

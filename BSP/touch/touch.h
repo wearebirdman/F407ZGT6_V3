@@ -19,8 +19,8 @@
 #if TOUCH_USE_EEPROM_CAL
 #include "at24cxx.h"
 #define TOUCH_EEPROM_OK             AT24CXX_OK
-#define TOUCH_EEPROM_WRITE(a, b, l) AT24CXX_Write((a), (b), (l))
-#define TOUCH_EEPROM_READ(a, b, l)  AT24CXX_Read((a), (b), (l))
+#define TOUCH_EEPROM_WRITE(a, b, l) AT24Cxx_Write((a), (b), (l))
+#define TOUCH_EEPROM_READ(a, b, l)  AT24Cxx_Read((a), (b), (l))
 #define TOUCH_CAL_EEPROM_ADDR       EEPROM_ADDR_TOUCH_CAL /* 校准参数起始地址 */
 #endif
 

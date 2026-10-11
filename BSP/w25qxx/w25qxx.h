@@ -82,7 +82,7 @@ typedef enum {
     W25QXX_ERR_PROTECTED, /* 写保护 */
     W25QXX_ERR_ADDR,      /* 地址越界 */
     W25QXX_ERR_PARAM,     /* 参数错误 */
-} W25QXXErr_t;
+} W25QxxErr_t;
 
 /* 芯片信息结构体 */
 typedef struct {
@@ -95,23 +95,23 @@ typedef struct {
     uint32_t page_count;   /* 页数量 */
     uint32_t sector_count; /* 扇区数量 */
     uint32_t block_count;  /* 块数量 */
-} W25QXXInfo_t;
+} W25QxxInfo_t;
 
 /* 函数接口（按消费方分类） */
 
 /* ---- A 类：文件系统核心（SVC/fs 唯一消费）---- */
-W25QXXErr_t W25QXX_Init(void);                                       /* 初始化（验证芯片 ID，含唤醒） */
-void W25QXX_GetInfo(W25QXXInfo_t *info);                             /* 获取芯片信息 */
-W25QXXErr_t W25QXX_Read(uint32_t addr, uint8_t *buf, uint32_t len);  /* 读取数据（整块接收） */
-W25QXXErr_t W25QXX_Write(uint32_t addr, const uint8_t *buf, uint32_t len); /* 写入数据（自动跨页拆分，需目标区已擦除） */
-W25QXXErr_t W25QXX_SectorErase(uint32_t addr);                       /* 扇区擦除（4KB） */
+W25QxxErr_t W25Qxx_Init(void);                                       /* 初始化（验证芯片 ID，含唤醒） */
+void W25Qxx_GetInfo(W25QxxInfo_t *info);                             /* 获取芯片信息 */
+W25QxxErr_t W25Qxx_Read(uint32_t addr, uint8_t *buf, uint32_t len);  /* 读取数据（整块接收） */
+W25QxxErr_t W25Qxx_Write(uint32_t addr, const uint8_t *buf, uint32_t len); /* 写入数据（自动跨页拆分，需目标区已擦除） */
+W25QxxErr_t W25Qxx_SectorErase(uint32_t addr);                       /* 扇区擦除（4KB） */
 
 /* ---- B 类：电源管理（系统低功耗策略用，文件系统不调用）---- */
-W25QXXErr_t W25QXX_PowerDown(void);                                  /* 进入掉电模式 */
-W25QXXErr_t W25QXX_WakeUp(void);                                     /* 退出掉电模式 */
+W25QxxErr_t W25Qxx_PowerDown(void);                                  /* 进入掉电模式 */
+W25QxxErr_t W25Qxx_WakeUp(void);                                     /* 退出掉电模式 */
 
 #if W25QXX_ENABLE_EXAMPLE
-void W25QXX_Example(void);                                           /* 使用示例 */
+void W25Qxx_Example(void);                                           /* 使用示例 */
 #endif
 
 #endif /* __W25QXX_H */

@@ -78,7 +78,7 @@
  * 1. 在此定义 ADDR / SIZE
  * 2. 各外设头文件只引用本表宏，不自行拍地址
  * 当前分配：
- * 0x00 ~ 0x0F  测试区（AT24CXX_Example，16 字节）
+ * 0x00 ~ 0x0F  测试区（AT24Cxx_Example，16 字节）
  * 0x28 ~ 0x38  触摸校准参数（17 字节）
  * 空闲起始：   0x39
  */
@@ -95,7 +95,7 @@ typedef enum {
     AT24CXX_ERR_TIMEOUT, /* 超时（写周期等待超时） */
     AT24CXX_ERR_ADDR,    /* 地址越界 */
     AT24CXX_ERR_PARAM,   /* 参数错误 */
-} AT24CXXErr_t;
+} AT24CxxErr_t;
 
 /* 芯片信息结构体 */
 typedef struct {
@@ -103,16 +103,16 @@ typedef struct {
     uint32_t page_size;  /* 页大小（字节） */
     uint32_t page_count; /* 页数量 */
     uint16_t dev_addr;   /* 7位设备地址 */
-} AT24CXXInfo_t;
+} AT24CxxInfo_t;
 
 /* 函数接口 */
-AT24CXXErr_t AT24CXX_Init(void);                                              /* 初始化（检测设备在位） */
-void AT24CXX_GetInfo(AT24CXXInfo_t *info);                                    /* 获取芯片信息 */
-AT24CXXErr_t AT24CXX_Read(uint16_t addr, uint8_t *buf, uint16_t len);         /* 读取数据 */
-AT24CXXErr_t AT24CXX_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len);    /* 页写入（单次最多一页） */
-AT24CXXErr_t AT24CXX_Write(uint16_t addr, uint8_t *buf, uint16_t len);        /* 写入数据（自动处理跨页） */
+AT24CxxErr_t AT24Cxx_Init(void);                                              /* 初始化（检测设备在位） */
+void AT24Cxx_GetInfo(AT24CxxInfo_t *info);                                    /* 获取芯片信息 */
+AT24CxxErr_t AT24Cxx_Read(uint16_t addr, uint8_t *buf, uint16_t len);         /* 读取数据 */
+AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len);    /* 页写入（单次最多一页） */
+AT24CxxErr_t AT24Cxx_Write(uint16_t addr, uint8_t *buf, uint16_t len);        /* 写入数据（自动处理跨页） */
 #if AT24CXX_ENABLE_EXAMPLE
-void AT24CXX_Example(void);                                                   /* 使用示例 */
+void AT24Cxx_Example(void);                                                   /* 使用示例 */
 #endif
 
 #endif /* __AT24CXX_H */

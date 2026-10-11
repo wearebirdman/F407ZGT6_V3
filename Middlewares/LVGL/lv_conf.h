@@ -56,8 +56,8 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
 /** Size of the pool `lv_malloc()` allocates from. Needs to be at least 2kB (2048). */
-/* 跑官方 widgets demo 需 ≥64KB；删除 demo 做自有 UI 后可回调至 24~32KB */
-#define LV_MEM_SIZE 65536
+/* 简化版 widgets demo 实测占用约 20KB，32KB 为自有 UI 留余量；官方 demo 才需 ≥64KB */
+#define LV_MEM_SIZE 32768
 
 /** Place the pool at a fixed address instead of allocating it as a normal array.
  *  0: unused.
@@ -1008,7 +1008,7 @@
 #define LV_FONT_MONTSERRAT_10 0
 
 /** Montserrat 12 */
-#define LV_FONT_MONTSERRAT_12 1
+#define LV_FONT_MONTSERRAT_12 0
 
 /** Montserrat 14 */
 #define LV_FONT_MONTSERRAT_14 1
@@ -1017,7 +1017,7 @@
 #define LV_FONT_MONTSERRAT_16 0
 
 /** Montserrat 18 */
-#define LV_FONT_MONTSERRAT_18 1
+#define LV_FONT_MONTSERRAT_18 0
 
 /** Montserrat 20 */
 #define LV_FONT_MONTSERRAT_20 0
@@ -2607,7 +2607,11 @@
  */
 #define LV_USE_DEMO_VECTOR_GRAPHIC 0
 
-/** Widgets demo */
+/** Widgets demo
+ *
+ *  模板工程维护的简化版（demos/widgets/lv_demo_widgets.c）：仅用默认字体
+ *  Montserrat 14，内置内存池 32KB 即可运行；官方完整版已删除
+ */
 #define LV_USE_DEMO_WIDGETS 1
 
 /** Flex layout demo */

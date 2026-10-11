@@ -83,7 +83,7 @@ static uint32_t FsW25q_TableCrc(const FsW25qTable_t *table)
  * 返回: 1 = 副本有效（magic/版本/计数/CRC 全部通过），*seq 输出提交序号；0 = 无效 */
 static uint8_t FsW25q_LoadCopy(uint32_t idx, uint32_t *seq)
 {
-    if (W25QXX_Read(idx * W25QXX_SECTOR_SIZE, (uint8_t *)&s_Table,
+    if (W25Qxx_Read(idx * W25QXX_SECTOR_SIZE, (uint8_t *)&s_Table,
                     (uint32_t)sizeof(s_Table)) != W25QXX_OK)
         return 0;
 
@@ -104,9 +104,9 @@ static FsW25qErr_t FsW25q_WriteTable(uint32_t idx)
 
     s_Table.table_crc = FsW25q_TableCrc(&s_Table);
 
-    if (W25QXX_SectorErase(addr) != W25QXX_OK)
+    if (W25Qxx_SectorErase(addr) != W25QXX_OK)
         return FS_W25Q_ERR_FLASH;
-    if (W25QXX_Write(addr, (uint8_t *)&s_Table, (uint32_t)sizeof(s_Table)) != W25QXX_OK)
+    if (W25Qxx_Write(addr, (uint8_t *)&s_Table, (uint32_t)sizeof(s_Table)) != W25QXX_OK)
         return FS_W25Q_ERR_FLASH;
 
     uint32_t crc = FS_W25Q_CRC32_INIT;
@@ -115,7 +115,7 @@ static FsW25qErr_t FsW25q_WriteTable(uint32_t idx)
     while (remaining > 0)
     {
         uint32_t chunk = (remaining > FS_W25Q_CHUNK) ? FS_W25Q_CHUNK : remaining;
-        if (W25QXX_Read(addr + off, s_ChunkBuf, chunk) != W25QXX_OK)
+        if (W25Qxx_Read(addr + off, s_ChunkBuf, chunk) != W25QXX_OK)
             return FS_W25Q_ERR_FLASH;
         crc = FsW25q_Crc32Update(crc, s_ChunkBuf, chunk);
         off += chunk;
@@ -214,7 +214,7 @@ static FsW25qErr_t FsW25q_AllocRegion(uint32_t size, uint32_t *offset)
     uint32_t sectors = need / W25QXX_SECTOR_SIZE;
     for (uint32_t s = 0; s < sectors; s++)
     {
-        if (W25QXX_SectorErase(cand + s * W25QXX_SECTOR_SIZE) != W25QXX_OK)
+        if (W25Qxx_SectorErase(cand + s * W25QXX_SECTOR_SIZE) != W25QXX_OK)
             return FS_W25Q_ERR_FLASH;
     }
 
@@ -253,7 +253,7 @@ FsW25qErr_t FsW25q_Mount(void)
     if (s_Mounted)
         return FS_W25Q_OK;
 
-    if (W25QXX_Init() != W25QXX_OK)
+    if (W25Qxx_Init() != W25QXX_OK)
         return FS_W25Q_ERR_FLASH;
 
     uint32_t seq_a = 0;
@@ -359,7 +359,7 @@ FsW25qErr_t FsW25q_Write(FsW25qFil_t *fil, const uint8_t *buf, uint32_t btw, uin
         return FS_W25Q_OK;
     }
 
-    if (W25QXX_Write(fil->offset + fil->pos, buf, btw) != W25QXX_OK)
+    if (W25Qxx_Write(fil->offset + fil->pos, buf, btw) != W25QXX_OK)
         return FS_W25Q_ERR_FLASH;
 
     fil->crc = FsW25q_Crc32Update(fil->crc, buf, btw);
@@ -387,7 +387,7 @@ FsW25qErr_t FsW25q_Read(FsW25qFil_t *fil, uint8_t *buf, uint32_t btr, uint32_t *
         return FS_W25Q_OK;
     }
 
-    if (W25QXX_Read(fil->offset + fil->pos, buf, n) != W25QXX_OK)
+    if (W25Qxx_Read(fil->offset + fil->pos, buf, n) != W25QXX_OK)
         return FS_W25Q_ERR_FLASH;
 
     fil->pos += n;
@@ -572,7 +572,7 @@ FsW25qErr_t FsW25q_Verify(const char *name, uint32_t *calc_crc)
     while (remaining > 0)
     {
         uint32_t chunk = (remaining > FS_W25Q_CHUNK) ? FS_W25Q_CHUNK : remaining;
-        if (W25QXX_Read(addr, s_ChunkBuf, chunk) != W25QXX_OK)
+        if (W25Qxx_Read(addr, s_ChunkBuf, chunk) != W25QXX_OK)
             return FS_W25Q_ERR_FLASH;
         crc = FsW25q_Crc32Update(crc, s_ChunkBuf, chunk);
         addr += chunk;

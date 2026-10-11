@@ -32,7 +32,7 @@ static volatile uint16_t s_RxLenA;        /* A 的有效字节数（ISR 写、�
 static volatile uint16_t s_RxLenB;        /* B 的有效字节数（ISR 写、任务读） */
 static volatile uint8_t s_RxReadyA;       /* 1 = A 已满待消费 */
 static volatile uint8_t s_RxReadyB;       /* 1 = B 已满待消费 */
-static uint8_t s_RxActive;                /* 0 = DMA 正写 A，1 = DMA 正写 B */
+static volatile uint8_t s_RxActive;       /* 0 = DMA 正写 A，1 = DMA 正写 B */
 static uint8_t s_Quiet;                   /* 1 = Uart_Printf 丢弃输出（独占传输期间防污染协议流） */
 /* USER CODE END 0 */
 

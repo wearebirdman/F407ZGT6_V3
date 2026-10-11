@@ -4,17 +4,29 @@ BasedOnStyle: Microsoft
 IndentWidth: 4
 UseTab: Never
 TabWidth: 4
-ColumnLimit: 0
+ColumnLimit: 120
 ---
 Language: Cpp
 AccessModifierOffset: -4
 NamespaceIndentation: All
 FixNamespaceComments: false
-BreakBeforeBraces: Linux
-AllowShortIfStatementsOnASingleLine: true
-AllowShortLoopsOnASingleLine: true
-AllowShortBlocksOnASingleLine: true
-IndentCaseLabels: true
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: Always
+  AfterStruct: false
+  AfterEnum: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeElse: true
+  BeforeWhile: false
+  IndentBraces: false
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+IndentCaseLabels: false
 SortIncludes: false
 AlignConsecutiveMacros: AcrossEmptyLines
 AlignConsecutiveAssignments: Consecutive
+PointerAlignment: Right

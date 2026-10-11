@@ -27,9 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "key.h"
 #include "led.h"
-#include "lcd.h"
 #include "touch.h"
-#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

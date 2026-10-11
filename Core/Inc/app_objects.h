@@ -1,5 +1,5 @@
-#ifndef __APP_OBJECTS_H__
-#define __APP_OBJECTS_H__
+#ifndef __APP_OBJECTS_H
+#define __APP_OBJECTS_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,4 +25,4 @@ extern osSemaphoreId_t Uart1RxSemHandle;    /* USART1 接收帧计数信号量 *
 }
 #endif
 
-#endif /* __APP_OBJECTS_H__ */
+#endif /* __APP_OBJECTS_H */
