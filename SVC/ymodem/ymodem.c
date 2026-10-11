@@ -6,6 +6,7 @@
 /* ========== 协议常量 ========== */
 #define YMODEM_SOH            0x01U /* 128 字节数据字段包类型 */
 #define YMODEM_STX            0x02U /* 1024 字节数据字段包类型 */
+#define YMODEM_EOT            0x04U /* 传输结束（两段确认：EOT→NAK→EOT→ACK） */
 #define YMODEM_CAN            0x18U /* 取消 */
 #define YMODEM_ACK            0x06U /* 应答 */
 #define YMODEM_NAK            0x15U /* 否定应答（请求重发） */
@@ -28,6 +29,7 @@ typedef enum {
     YMODEM_PKT_OK = 0,   /* 完整包且 CRC 有效 */
     YMODEM_PKT_TIMEOUT,  /* 超时未见有效包首字节 */
     YMODEM_PKT_CAN,      /* 收到发送方 CAN */
+    YMODEM_PKT_EOT,      /* 收到发送方 EOT */
     YMODEM_PKT_BAD,      /* 意外字节 / seq 反码 / CRC 错误 */
 } YmodemPktState_t;
 
@@ -112,6 +114,8 @@ static YmodemPktState_t Ymodem_GetPacket(uint32_t wait_ms, uint32_t *data_len)
         return YMODEM_PKT_TIMEOUT;
     if ((uint8_t)b == YMODEM_CAN)
         return YMODEM_PKT_CAN;
+    if ((uint8_t)b == YMODEM_EOT)
+        return YMODEM_PKT_EOT;
 
     uint32_t len;
     if ((uint8_t)b == YMODEM_SOH)
@@ -211,6 +215,11 @@ YmodemErr_t Ymodem_Receive(const YmodemSink_t *sink)
         st = Ymodem_GetPacket(YMODEM_DATA_WAIT_MS, &len);
         if (st == YMODEM_PKT_CAN)
             return YMODEM_ERR_ABORTED;
+        if (st == YMODEM_PKT_EOT) /* 未收满声明长度即 EOT：发送方提前结束，视为协议错误 */
+        {
+            Ymodem_Abort();
+            return YMODEM_ERR_PROTOCOL;
+        }
         if (st == YMODEM_PKT_TIMEOUT)
         {
             if (++retries > YMODEM_RETRY_MAX)
@@ -260,8 +269,33 @@ YmodemErr_t Ymodem_Receive(const YmodemSink_t *sink)
             break;
     }
 
-    /* ---- 4. 结束块（空文件名头块）---- */
-    st = Ymodem_GetPacket(YMODEM_DATA_WAIT_MS, &len);
+    /* ---- 4. EOT 两段确认：首个 EOT 回 NAK 请求重发，再次 EOT 回 ACK+'C' ---- */
+    for (;;) /* 末块 ACK 丢失时发送方会重发末块：持续应答重复块直至 EOT/超时/CAN */
+    {
+        st = Ymodem_GetPacket(YMODEM_DATA_WAIT_MS, &len);
+        if (st == YMODEM_PKT_OK && s_Pkt[0] == (uint8_t)(expected - 1U))
+        {
+            Ymodem_SendByte(YMODEM_ACK);
+            continue;
+        }
+        break;
+    }
+    if (st == YMODEM_PKT_EOT)
+    {
+        Ymodem_SendByte(YMODEM_NAK);
+        st = Ymodem_GetPacket(YMODEM_DATA_WAIT_MS, &len);
+        if (st == YMODEM_PKT_EOT)
+        {
+            Ymodem_SendByte(YMODEM_ACK);
+            Ymodem_SendByte(YMODEM_C); /* 请求结束块（或下一文件头块） */
+            st = Ymodem_GetPacket(YMODEM_DATA_WAIT_MS, &len);
+        }
+    }
+    if (st == YMODEM_PKT_CAN)
+        return YMODEM_ERR_ABORTED;
+    /* 发送方跳过 EOT 直发空头块（非标准但兼容）：st 为 PKT_OK 时直接落入第 5 步 */
+
+    /* ---- 5. 结束块（空文件名头块）---- */
     if (st == YMODEM_PKT_OK && len == YMODEM_HDR_LEN && s_Pkt[2] == 0U)
     {
         Ymodem_SendByte(YMODEM_ACK);
@@ -272,7 +306,7 @@ YmodemErr_t Ymodem_Receive(const YmodemSink_t *sink)
     }
     /* 结束块缺失不影响收尾：数据已收满且协议层 CRC 自洽 */
 
-    /* ---- 5. 通知上层传输完成（回调负责校验/登记）---- */
+    /* ---- 6. 通知上层传输完成（回调负责校验/登记）---- */
     if (sink->on_end != NULL && sink->on_end(written, sink->ctx) != 0)
         return YMODEM_ERR_REJECT;
 

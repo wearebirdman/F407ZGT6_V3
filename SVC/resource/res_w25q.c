@@ -431,7 +431,7 @@ YmodemErr_t ResW25q_YmodemStore(void)
             Uart_Printf("ymodem: aborted by sender\r\n");
             break;
         case YMODEM_ERR_PROTOCOL:
-            Uart_Printf("ymodem: protocol error (too many bad packets)\r\n");
+            Uart_Printf("ymodem: protocol error\r\n");
             break;
         case YMODEM_ERR_PARAM:
             Uart_Printf("ymodem: bad header (name/size invalid)\r\n");

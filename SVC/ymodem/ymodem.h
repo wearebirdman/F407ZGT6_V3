@@ -15,7 +15,7 @@ typedef enum {
     YMODEM_OK = 0,        /* 接收完成 */
     YMODEM_ERR_TIMEOUT,   /* 握手/包等待超时（发送方未响应） */
     YMODEM_ERR_ABORTED,   /* 发送方 CAN 中止 */
-    YMODEM_ERR_PROTOCOL,  /* 连续坏包超限 */
+    YMODEM_ERR_PROTOCOL,  /* 协议错误（连续坏包超限 / 未收满即 EOT） */
     YMODEM_ERR_PARAM,     /* 头块解析失败（文件名/长度非法） */
     YMODEM_ERR_REJECT,    /* 接收方回调拒绝（存储层返回非 0） */
 } YmodemErr_t;
