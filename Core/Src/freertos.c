@@ -216,6 +216,7 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
   /* defaultTask 仅作占位无业务：立即注销自身，释放其栈与 TCB 内存 */
+
   osThreadTerminate(osThreadGetId());
   /* USER CODE END StartDefaultTask */
 }

@@ -23,6 +23,7 @@
 # clangd 本地配置：含本机工具链绝对路径，换机需重生成；.cache 为其索引缓存
 /.clangd
 /.cache/
+/.trae/
 
 # ========== CubeMX 生成的 Makefile：EIDE 构建不使用，留在本地即可 ==========
 /Makefile

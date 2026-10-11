@@ -8,6 +8,7 @@ srcDirs:
   - Core
   - Drivers
   - APP
+  - SVC
   - Middlewares
 virtualFolder:
   name: <virtual_root>
@@ -49,6 +50,8 @@ targets:
         - APP/lvgl
         - APP/touch
         - APP/uart
+        - SVC/resource
+        - SVC/ymodem
         - Middlewares/LVGL
         - Middlewares/LVGL/lvgl
         - Middlewares/LVGL/lvgl/include

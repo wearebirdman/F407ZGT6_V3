@@ -111,6 +111,8 @@ void AT24CXX_GetInfo(AT24CXXInfo_t *info);                                    /*
 AT24CXXErr_t AT24CXX_Read(uint16_t addr, uint8_t *buf, uint16_t len);         /* 读取数据 */
 AT24CXXErr_t AT24CXX_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len);    /* 页写入（单次最多一页） */
 AT24CXXErr_t AT24CXX_Write(uint16_t addr, uint8_t *buf, uint16_t len);        /* 写入数据（自动处理跨页） */
+#if AT24CXX_ENABLE_EXAMPLE
 void AT24CXX_Example(void);                                                   /* 使用示例 */
+#endif
 
 #endif /* __AT24CXX_H */

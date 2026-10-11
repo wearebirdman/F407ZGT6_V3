@@ -5,7 +5,7 @@
 
 /* SPI 与片选引脚配置宏 */
 #define W25QXX_SPI     hspi1
-#define W25QXX_CS_PORT GPIOA
+#define W25QXX_CS_PORT GPIOG
 #define W25QXX_CS_PIN  GPIO_PIN_15
 
 /* 芯片型号选择（取消注释其中一个） */
@@ -27,12 +27,12 @@
 #define W25QXX_EXPECTED_ID  0xEF4016    /* JEDEC ID (Winbond 0xEF, Type 0x40, Size 0x16) */
 #endif
 
-/* W25Q128 芯片容量参数（128MB = 1024Mbit） */
+/* W25Q128 芯片容量参数（16MB = 128Mbit） */
 #ifdef W25Q128
-#define W25QXX_CHIP_SIZE    134217728UL /* 总容量：128MB */
-#define W25QXX_PAGE_COUNT   524288      /* 页数量 (128MB / 256B) */
-#define W25QXX_SECTOR_COUNT 32768       /* 扇区数量 (128MB / 4KB) */
-#define W25QXX_BLOCK_COUNT  2048        /* 块数量 (128MB / 64KB) */
+#define W25QXX_CHIP_SIZE    16777216UL  /* 总容量：16MB */
+#define W25QXX_PAGE_COUNT   65536       /* 页数量 (16MB / 256B) */
+#define W25QXX_SECTOR_COUNT 4096        /* 扇区数量 (16MB / 4KB) */
+#define W25QXX_BLOCK_COUNT  256         /* 块数量 (16MB / 64KB) */
 #define W25QXX_EXPECTED_ID  0xEF4018    /* JEDEC ID (Winbond 0xEF, Type 0x40, Size 0x18) */
 #endif
 
@@ -130,8 +130,8 @@ W25QXXErr_t W25QXX_WriteEnable(void);                                        /* 
 W25QXXErr_t W25QXX_WriteDisable(void);                                       /* 写禁止 */
 W25QXXErr_t W25QXX_WaitBusy(void);                                           /* 等待芯片空闲（默认超时） */
 W25QXXErr_t W25QXX_Read(uint32_t addr, uint8_t *buf, uint32_t len);          /* 读取数据 */
-W25QXXErr_t W25QXX_Write(uint32_t addr, uint8_t *buf, uint32_t len);         /* 写入数据（自动处理跨页） */
-W25QXXErr_t W25QXX_PageWrite(uint32_t addr, uint8_t *buf, uint16_t len);     /* 页写入（单次最多256字节） */
+W25QXXErr_t W25QXX_Write(uint32_t addr, const uint8_t *buf, uint32_t len);         /* 写入数据（自动处理跨页） */
+W25QXXErr_t W25QXX_PageWrite(uint32_t addr, const uint8_t *buf, uint16_t len);     /* 页写入（单次最多256字节） */
 W25QXXErr_t W25QXX_SectorErase(uint32_t addr);                               /* 扇区擦除（4KB） */
 W25QXXErr_t W25QXX_BlockErase32K(uint32_t addr);                             /* 块擦除（32KB） */
 W25QXXErr_t W25QXX_BlockErase64K(uint32_t addr);                             /* 块擦除（64KB） */
@@ -140,6 +140,8 @@ W25QXXErr_t W25QXX_PowerDown(void);                                          /* 
 W25QXXErr_t W25QXX_WakeUp(void);                                             /* 退出掉电模式 */
 uint8_t W25QXX_IsBusy(void);                                                 /* 查询芯片是否忙碌 */
 uint8_t W25QXX_IsWriteEnabled(void);                                         /* 查询写使能状态 */
+#if W25QXX_ENABLE_EXAMPLE
 void W25QXX_Example(void);                                                   /* 使用示例 */
+#endif
 
 #endif /* __W25QXX_H */

@@ -17,9 +17,12 @@
 #define W25QXX_TIMEOUT_BLOCK_ERASE  1000  /* 块擦除超时 */
 #define W25QXX_TIMEOUT_CHIP_ERASE   90000 /* 整片擦除超时（典型 40~80 秒） */
 #define W25QXX_SPI_TIMEOUT          100   /* SPI 单字节超时（ms） */
+#define W25QXX_BULK_CHUNK_SIZE      4096U /* HAL 整块传输单次长度上限（长度字段 16 位，需分段） */
+#define W25QXX_BULK_BYTES_PER_MS    256U  /* 整块传输超时预算：保守吞吐下限（字节/ms），实测约 5MB/s */
 
 /* ========== 内部函数声明 ========== */
 static HAL_StatusTypeDef W25QXX_SPI_RW(uint8_t tx, uint8_t *rx);
+static HAL_StatusTypeDef W25QXX_SendCmdAddr(uint8_t cmd, uint32_t addr);
 static uint8_t W25QXX_CheckAddr(uint32_t addr, uint32_t len);
 static W25QXXErr_t W25QXX_ReadStatus1Checked(uint8_t *sr1);
 static uint8_t W25QXX_CheckProtected(void);
@@ -34,6 +37,19 @@ static HAL_StatusTypeDef W25QXX_SPI_RW(uint8_t tx, uint8_t *rx)
 {
     uint8_t dummy;
     return HAL_SPI_TransmitReceive(&W25QXX_SPI, &tx, (rx != NULL) ? rx : &dummy, 1, W25QXX_SPI_TIMEOUT);
+}
+
+/* 发送命令 + 24 位地址头（共 4 字节，调用方负责片选）
+ * 用 TransmitReceive 同步收干接收字节，保证后续整块接收从 FIFO 空状态开始
+ * cmd: 命令字节
+ * addr: 24 位字节地址
+ * 返回: HAL 传输状态 */
+static HAL_StatusTypeDef W25QXX_SendCmdAddr(uint8_t cmd, uint32_t addr)
+{
+    uint8_t header[4] = { cmd, (uint8_t)((addr >> 16) & 0xFF), (uint8_t)((addr >> 8) & 0xFF), (uint8_t)(addr & 0xFF) };
+    uint8_t rx_dummy[sizeof(header)];
+
+    return HAL_SPI_TransmitReceive(&W25QXX_SPI, header, rx_dummy, sizeof(header), W25QXX_SPI_TIMEOUT);
 }
 
 /* ========== 内部辅助函数 ========== */
@@ -245,16 +261,20 @@ W25QXXErr_t W25QXX_Read(uint32_t addr, uint8_t *buf, uint32_t len)
         return W25QXX_ERR_ADDR;
 
     W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_READ, NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((addr >> 16) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((addr >> 8) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)(addr & 0xFF), NULL);
 
-    for (uint32_t i = 0; i < len && st == HAL_OK; i++)
-        st = W25QXX_SPI_RW(0xFF, &buf[i]);
+    HAL_StatusTypeDef st = W25QXX_SendCmdAddr(W25QXX_READ, addr);
+
+    /* 片选保持期间 READ 命令地址自动递增，整块分段接收（仅切分 HAL 调用） */
+    uint32_t remaining = len;
+    uint8_t *cursor = buf;
+    while (remaining > 0 && st == HAL_OK)
+    {
+        uint32_t chunk = (remaining > W25QXX_BULK_CHUNK_SIZE) ? W25QXX_BULK_CHUNK_SIZE : remaining;
+        uint32_t timeout = W25QXX_SPI_TIMEOUT + chunk / W25QXX_BULK_BYTES_PER_MS;
+        st = HAL_SPI_Receive(&W25QXX_SPI, cursor, (uint16_t)chunk, timeout);
+        cursor += chunk;
+        remaining -= chunk;
+    }
 
     W25QXX_CS_HIGH();
     return (st == HAL_OK) ? W25QXX_OK : W25QXX_ERR_TIMEOUT;
@@ -265,7 +285,7 @@ W25QXXErr_t W25QXX_Read(uint32_t addr, uint8_t *buf, uint32_t len)
 /* 页写入（单次最多 256 字节）
  * 如果数据跨页，硬件会自动回绕到页首，可能导致数据覆盖，
  * 调用者应使用 W25QXX_Write() 处理跨页 */
-W25QXXErr_t W25QXX_PageWrite(uint32_t addr, uint8_t *buf, uint16_t len)
+W25QXXErr_t W25QXX_PageWrite(uint32_t addr, const uint8_t *buf, uint16_t len)
 {
     /* 参数检查 */
     if (buf == NULL || len == 0)
@@ -287,16 +307,13 @@ W25QXXErr_t W25QXX_PageWrite(uint32_t addr, uint8_t *buf, uint16_t len)
         return ret;
 
     W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_PAGE_PROGRAM, NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((addr >> 16) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((addr >> 8) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)(addr & 0xFF), NULL);
 
-    for (uint16_t i = 0; i < len && st == HAL_OK; i++)
-        st = W25QXX_SPI_RW(buf[i], NULL);
+    HAL_StatusTypeDef st = W25QXX_SendCmdAddr(W25QXX_PAGE_PROGRAM, addr);
+    if (st == HAL_OK)
+    {
+        uint32_t timeout = W25QXX_SPI_TIMEOUT + (uint32_t)len / W25QXX_BULK_BYTES_PER_MS;
+        st = HAL_SPI_Transmit(&W25QXX_SPI, (uint8_t *)buf, len, timeout); /* HAL 形参非 const，驱动内唯一转换点 */
+    }
 
     W25QXX_CS_HIGH();
     if (st != HAL_OK)
@@ -308,11 +325,11 @@ W25QXXErr_t W25QXX_PageWrite(uint32_t addr, uint8_t *buf, uint16_t len)
 /* 任意地址写入任意长度数据（自动处理跨页）
  * 自动将数据拆分为多次页写入，处理页边界。
  * 注意：写入前需要确保目标地址所在的扇区已被擦除 */
-W25QXXErr_t W25QXX_Write(uint32_t addr, uint8_t *buf, uint32_t len)
+W25QXXErr_t W25QXX_Write(uint32_t addr, const uint8_t *buf, uint32_t len)
 {
     uint32_t remaining = len;
     uint32_t current_addr = addr;
-    uint8_t *current_buf = buf;
+    const uint8_t *current_buf = buf;
 
     /* 参数检查 */
     if (buf == NULL || len == 0)
@@ -523,17 +540,17 @@ void W25QXX_Example(void)
     /* 2. 获取芯片信息 */
     W25QXX_GetInfo(&info);
     printf("========== W25QXX Info ==========\r\n");
-    printf("JEDEC ID:     0x%06X\r\n", info.jedec_id);
+    printf("JEDEC ID:     0x%06lX\r\n", info.jedec_id);
     printf("Manufacturer: 0x%02X\r\n", info.manufacturer);
     printf("Memory Type:  0x%02X\r\n", info.memory_type);
     printf("Capacity ID:  0x%02X\r\n", info.capacity);
-    printf("Capacity:     %u MB (%lu bytes)\r\n", info.size_mb, W25QXX_CHIP_SIZE);
+    printf("Capacity:     %lu MB (%lu bytes)\r\n", info.size_mb, W25QXX_CHIP_SIZE);
     printf("Sector Size:  %u KB\r\n", W25QXX_SECTOR_SIZE / 1024);
-    printf("Sector Count: %u\r\n", info.sector_count);
+    printf("Sector Count: %lu\r\n", info.sector_count);
     printf("Block Size:   %u KB\r\n", W25QXX_BLOCK_SIZE / 1024);
-    printf("Block Count:  %u\r\n", info.block_count);
+    printf("Block Count:  %lu\r\n", info.block_count);
     printf("Page Size:    %u B\r\n", W25QXX_PAGE_SIZE);
-    printf("Page Count:   %u\r\n", info.page_count);
+    printf("Page Count:   %lu\r\n", info.page_count);
     printf("==================================\r\n\r\n");
 
     /* 3. 擦除扇区（使用第一个扇区） */

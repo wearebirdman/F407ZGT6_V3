@@ -45,8 +45,11 @@ extern UART_HandleTypeDef huart1;
 void MX_USART1_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-void Uart_Printf(const char *fmt, ...);   /* printf 风格调试发送：互斥锁整行发送，防任务间交错 */
+void Uart_Printf(const char *fmt, ...);   /* printf 风格调试发送：互斥锁整行原子，防任务间交错 */
 uint8_t *Uart_RxFetchFrame(uint16_t *len); /* 取出一帧就绪接收数据并清就绪标志，无则返回 NULL */
+void Uart_SetQuiet(uint8_t quiet);        /* 设置 Uart_Printf 静默开关（1 = 丢弃输出） */
+void Uart_RxStop(void);                   /* 停止 DMA 不定长接收（通道移交独占协议） */
+void Uart_RxRestart(void);                /* 恢复 DMA 空闲帧接收 */
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
