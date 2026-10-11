@@ -50,12 +50,12 @@ targets:
         - APP/lvgl
         - APP/touch
         - APP/uart
-        - SVC/resource
         - SVC/ymodem
         - Middlewares/LVGL
         - Middlewares/LVGL/lvgl
         - Middlewares/LVGL/lvgl/include
         - Middlewares/LVGL/lvgl/demos/widgets
+        - SVC/fs
       libList: []
     excludeList: []
     settings:

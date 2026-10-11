@@ -1,43 +1,10 @@
 #include "uart_task.h"
-#include "res_w25q.h"
+#include "fs_w25q.h"
 #include "usart.h"
-#include "w25qxx.h"
 
 #include <string.h>
 
-/* ========== 命令处理 ========== */
-
-/* W25QXX 懒初始化：失败则下次命令时重试，不占启动流程
- * 返回: 1 = 已就绪, 0 = 初始化失败 */
-static uint8_t Uart_W25EnsureInit(void)
-{
-    static uint8_t s_W25Inited = 0; /* 1 = 初始化已成功 */
-
-    if (s_W25Inited)
-        return 1;
-    if (W25QXX_Init() == W25QXX_OK)
-    {
-        s_W25Inited = 1;
-        return 1;
-    }
-    return 0;
-}
-
-/* 打印 W25QXX 芯片信息（命令 w25info） */
-static void Uart_CmdW25Info(void)
-{
-    W25QXXInfo_t info;
-
-    if (!Uart_W25EnsureInit())
-    {
-        Uart_Printf("W25QXX init failed\r\n");
-        return;
-    }
-
-    W25QXX_GetInfo(&info);
-    Uart_Printf("JEDEC: 0x%06lX | Capacity: %lu MB | Sector: %lu | Page: %lu\r\n",
-                info.jedec_id, info.size_mb, info.sector_count, info.page_count);
-}
+/* ========== 命令解析辅助 ========== */
 
 /* 取出下一个空格分隔参数到 dst
  * args: 剩余参数串
@@ -79,91 +46,393 @@ static uint8_t Uart_ParseU32(const char *s, uint32_t *out)
     return 1;
 }
 
-/* 分区表命令：part=列目录 | part chk <name>=读回校验 | part gen <name> <size>=写测试图案
- * args: 命令词 part 之后的串 */
-static void Uart_CmdPart(const char *args)
+/* ========== 文件系统测试命令（临时测试逻辑：测试前写、测试后删） ========== */
+
+/* 打印 fs 操作结果
+ * op: 操作名; name: 目标文件名（可为 NULL）; ret: 文件系统错误码 */
+static void Uart_FsRet(const char *op, const char *name, FsW25qErr_t ret)
 {
-    char token[RES_W25Q_NAME_MAX];
+    if (name != NULL)
+        Uart_Printf("fs: %s %s -> %d\r\n", op, name, (int)ret);
+    else
+        Uart_Printf("fs: %s -> %d\r\n", op, (int)ret);
+}
 
-    while (*args == ' ')
-        args++;
+/* 列目录（Opendir/Readdir 遍历） */
+static void Uart_FsLs(void)
+{
+    FsW25qDir_t dir;
+    FsW25qFilInfo_t info;
 
-    if (*args == '\0')
+    Uart_Printf("== free %lu KB ==\r\n", FsW25q_GetFree() / 1024U);
+    if (FsW25q_Opendir(&dir) != FS_W25Q_OK)
+        return;
+
+    for (;;)
     {
-        ResW25q_List();
+        if (FsW25q_Readdir(&dir, &info) != FS_W25Q_OK || info.fname[0] == '\0')
+            break;
+        Uart_Printf("%-15s off=0x%06lX len=%lu crc=0x%08lX\r\n",
+                    info.fname, info.offset, info.fsize, info.crc32);
+    }
+}
+
+/* 创建图案文件：Open(WRITE)+顺序 Write(256B 块)+Close，分阶段报耗时 */
+static void Uart_FsMk(const char *name, uint32_t size)
+{
+    static uint8_t s_Pat[256];
+    FsW25qFil_t fil;
+
+    uint32_t t0 = osKernelGetTickCount();
+    FsW25qErr_t ret = FsW25q_Open(&fil, name, FS_W25Q_FA_WRITE, size);
+    uint32_t t1 = osKernelGetTickCount();
+    if (ret != FS_W25Q_OK)
+    {
+        Uart_FsRet("open", name, ret);
         return;
     }
 
-    if (strncmp(args, "chk", 3) == 0 && (args[3] == '\0' || args[3] == ' '))
+    uint32_t done = 0;
+    while (done < size)
     {
-        args += 3;
-        if (Uart_NextArg(args, token, sizeof(token)) == NULL)
-            Uart_Printf("usage: part chk <name>\r\n");
+        uint32_t chunk = (size - done > sizeof(s_Pat)) ? sizeof(s_Pat) : (size - done);
+        for (uint32_t i = 0; i < chunk; i++)
+            s_Pat[i] = (uint8_t)(done + i);
+
+        uint32_t bw;
+        ret = FsW25q_Write(&fil, s_Pat, chunk, &bw);
+        if (ret != FS_W25Q_OK)
+        {
+            Uart_FsRet("write", name, ret);
+            FsW25q_Close(&fil);
+            return;
+        }
+        done += chunk;
+    }
+
+    uint32_t t2 = osKernelGetTickCount();
+    ret = FsW25q_Close(&fil);
+    uint32_t t3 = osKernelGetTickCount();
+    Uart_FsRet("close", name, ret);
+    Uart_Printf("mk: %s | open(erase) %lu ms | write %lu ms | close %lu ms\r\n",
+                name, t1 - t0, t2 - t1, t3 - t2);
+}
+
+/* 校验文件（Verify：整文件读回 + CRC 比对） */
+static void Uart_FsChk(const char *name)
+{
+    uint32_t calc_crc;
+    FsW25qErr_t ret = FsW25q_Verify(name, &calc_crc);
+
+    if (ret == FS_W25Q_OK)
+        Uart_Printf("fs: %s verify OK\r\n", name);
+    else if (ret == FS_W25Q_ERR_MISMATCH)
+        Uart_Printf("fs: %s CRC mismatch (calc 0x%08lX)\r\n", name, calc_crc);
+    else
+        Uart_FsRet("chk", name, ret);
+}
+
+/* 读文件内容十六进制dump（Lseek+Read，最多 32 字节） */
+static void Uart_FsRd(const char *name, uint32_t pos, uint32_t len)
+{
+    uint8_t buf[32];
+    FsW25qFil_t fil;
+
+    if (len == 0 || len > sizeof(buf))
+        len = sizeof(buf);
+
+    FsW25qErr_t ret = FsW25q_Open(&fil, name, FS_W25Q_FA_READ, 0);
+    if (ret != FS_W25Q_OK)
+    {
+        Uart_FsRet("open", name, ret);
+        return;
+    }
+
+    ret = FsW25q_Lseek(&fil, pos);
+    if (ret != FS_W25Q_OK)
+    {
+        Uart_FsRet("seek", name, ret);
+        FsW25q_Close(&fil);
+        return;
+    }
+
+    uint32_t br;
+    ret = FsW25q_Read(&fil, buf, len, &br);
+    FsW25q_Close(&fil);
+    if (ret != FS_W25Q_OK)
+    {
+        Uart_FsRet("read", name, ret);
+        return;
+    }
+
+    Uart_Printf("rd: %s @%lu, %lu bytes:\r\n", name, pos, br);
+    for (uint32_t i = 0; i < br; i++)
+        Uart_Printf("%02X ", buf[i]);
+    Uart_Printf("\r\n");
+}
+
+/* 删除全部条目（反复删首项直到目录空） */
+static void Uart_FsRmall(void)
+{
+    FsW25qDir_t dir;
+    FsW25qFilInfo_t info;
+    uint32_t removed = 0;
+
+    for (;;)
+    {
+        if (FsW25q_Opendir(&dir) != FS_W25Q_OK)
+            break;
+        if (FsW25q_Readdir(&dir, &info) != FS_W25Q_OK || info.fname[0] == '\0')
+            break;
+        if (FsW25q_Remove(info.fname) != FS_W25Q_OK)
+            break;
+        removed++;
+    }
+
+    Uart_Printf("fs: rmall removed %lu\r\n", removed);
+}
+
+/* ========== 性能基准 ========== */
+#define FS_BENCH_SIZE    262144U       /* 基准文件 256KB */
+#define FS_BENCH_CHUNK   1024U         /* 顺序读写块大小 */
+#define FS_BENCH_KB      (FS_BENCH_SIZE / 1024U)
+#define FS_BENCH_SECTORS (FS_BENCH_SIZE / 4096U)
+#define FS_BENCH_RAND_N  1000U         /* 随机读次数（模拟 32B 字模） */
+#define FS_BENCH_STAT_N  100000U       /* 元数据查询次数 */
+
+/* 毫秒转吞吐 KB/s（bytes/ms ≈ KiB/s；dt=0 表示快于 tick 分辨率，返回 0） */
+static uint32_t Uart_BenchRate(uint32_t bytes, uint32_t dt_ms)
+{
+    if (dt_ms == 0)
+        return 0;
+    return bytes / dt_ms;
+}
+
+/* 性能基准：覆盖文件系统全部路径，分段报耗时与吞吐
+ * 注意：擦除+写入合计约 3~5s，期间 Uart_Proc 阻塞属预期 */
+static void Uart_FsBench(void)
+{
+    static uint8_t s_Buf[FS_BENCH_CHUNK];
+    FsW25qFil_t fil;
+    FsW25qFilInfo_t info;
+    uint32_t t0, t1, done, bw, br;
+
+    for (uint32_t i = 0; i < FS_BENCH_CHUNK; i++)
+        s_Buf[i] = (uint8_t)i;
+
+    Uart_Printf("bench: %lu KB, erase %lu sectors\r\n", FS_BENCH_KB, FS_BENCH_SECTORS);
+
+    /* 1. Open(WRITE)：first-fit 分配 + 整块擦除 */
+    t0 = osKernelGetTickCount();
+    if (FsW25q_Open(&fil, "bench", FS_W25Q_FA_WRITE, FS_BENCH_SIZE) != FS_W25Q_OK)
+    {
+        Uart_Printf("bench: open fail (busy/no space?)\r\n");
+        return;
+    }
+    t1 = osKernelGetTickCount();
+    Uart_Printf("open+erase  : %lu ms | %lu.%03lu ms/sector\r\n",
+                t1 - t0, (t1 - t0) / FS_BENCH_SECTORS,
+                ((t1 - t0) % FS_BENCH_SECTORS) * 1000U / FS_BENCH_SECTORS);
+
+    /* 2. 顺序写 256KB（含跨页拆分、页编程等待、CRC 累积） */
+    done = 0;
+    t0 = osKernelGetTickCount();
+    while (done < FS_BENCH_SIZE)
+    {
+        if (FsW25q_Write(&fil, s_Buf, FS_BENCH_CHUNK, &bw) != FS_W25Q_OK)
+        {
+            Uart_Printf("bench: write fail\r\n");
+            FsW25q_Close(&fil);
+            return;
+        }
+        done += bw;
+    }
+    t1 = osKernelGetTickCount();
+    Uart_Printf("seq write   : %lu ms | %lu KB/s\r\n", t1 - t0, Uart_BenchRate(done, t1 - t0));
+
+    /* 3. Close：Sync 目录表落盘（扇区 0 擦+写+CRC） */
+    t0 = osKernelGetTickCount();
+    if (FsW25q_Close(&fil) != FS_W25Q_OK)
+    {
+        Uart_Printf("bench: close fail\r\n");
+        return;
+    }
+    t1 = osKernelGetTickCount();
+    Uart_Printf("close(sync) : %lu ms\r\n", t1 - t0);
+
+    /* 4. 顺序读 256KB 到 EOF */
+    if (FsW25q_Open(&fil, "bench", FS_W25Q_FA_READ, 0) != FS_W25Q_OK)
+    {
+        Uart_Printf("bench: open rd fail\r\n");
+        return;
+    }
+    t0 = osKernelGetTickCount();
+    done = 0;
+    while (done < FS_BENCH_SIZE)
+    {
+        if (FsW25q_Read(&fil, s_Buf, FS_BENCH_CHUNK, &br) != FS_W25Q_OK || br == 0)
+            break;
+        done += br;
+    }
+    t1 = osKernelGetTickCount();
+    Uart_Printf("seq read    : %lu ms | %lu KB/s (%lu B)\r\n",
+                t1 - t0, Uart_BenchRate(done, t1 - t0), done);
+
+    /* 5. 随机读 32B × 1000（模拟字库字模取字：Lseek+Read） */
+    uint32_t seed = 12345U;
+    t0 = osKernelGetTickCount();
+    for (uint32_t i = 0; i < FS_BENCH_RAND_N; i++)
+    {
+        seed = seed * 1664525U + 1013904223U;
+        uint32_t pos = seed % (FS_BENCH_SIZE - 32U);
+        if (FsW25q_Lseek(&fil, pos) != FS_W25Q_OK)
+            break;
+        if (FsW25q_Read(&fil, s_Buf, 32U, &br) != FS_W25Q_OK)
+            break;
+    }
+    t1 = osKernelGetTickCount();
+    FsW25q_Close(&fil);
+    Uart_Printf("rand rd 32B : %lu ms / %lu rd | %lu us/rd\r\n",
+                t1 - t0, FS_BENCH_RAND_N, (t1 - t0) * 1000U / FS_BENCH_RAND_N);
+
+    /* 6. 元数据查询 × 100000（纯 RAM 表遍历，衡量 Open/Stat 查表开销） */
+    t0 = osKernelGetTickCount();
+    for (uint32_t i = 0; i < FS_BENCH_STAT_N; i++)
+    {
+        if (FsW25q_Stat("bench", &info) != FS_W25Q_OK)
+            break;
+    }
+    t1 = osKernelGetTickCount();
+    Uart_Printf("stat x100k  : %lu ms | ~%lu ns/ea\r\n", t1 - t0, (t1 - t0) * 10U);
+
+    /* 7. Verify 整文件读回 + 位算 CRC32 */
+    uint32_t crc;
+    t0 = osKernelGetTickCount();
+    FsW25qErr_t vret = FsW25q_Verify("bench", &crc);
+    t1 = osKernelGetTickCount();
+    Uart_Printf("verify+crc  : %lu ms | %lu KB/s | %s crc=0x%08lX\r\n",
+                t1 - t0, Uart_BenchRate(FS_BENCH_SIZE, t1 - t0),
+                (vret == FS_W25Q_OK) ? "OK" : "BAD", crc);
+
+    Uart_Printf("bench done: 'fs rm bench' to clean\r\n");
+}
+
+/* fs 命令入口：自动挂载。子命令：ls | stat <n> | rm <n> | rmall | mk <n> <size> | chk <n> | rd <n> <pos> [len] | bench */
+static void Uart_CmdFs(const char *args)
+{
+    char tok[FS_W25Q_NAME_MAX];
+    char num[16];
+    uint32_t v1, v2;
+
+    FsW25qErr_t ret = FsW25q_Mount();
+    if (ret != FS_W25Q_OK)
+    {
+        Uart_FsRet("mount", NULL, ret);
+        return;
+    }
+
+    const char *rest = Uart_NextArg(args, tok, sizeof(tok));
+    if (rest == NULL)
+    {
+        Uart_Printf("usage: fs ls|stat|rm|rmall|mk|chk|rd|bench\r\n");
+        return;
+    }
+
+    if (strcmp(tok, "ls") == 0)
+    {
+        Uart_FsLs();
+    }
+    else if (strcmp(tok, "bench") == 0)
+    {
+        Uart_FsBench();
+    }
+    else if (strcmp(tok, "rmall") == 0)
+    {
+        Uart_FsRmall();
+    }
+    else if (strcmp(tok, "stat") == 0)
+    {
+        if (Uart_NextArg(rest, tok, sizeof(tok)) == NULL)
+        {
+            Uart_Printf("usage: fs stat <name>\r\n");
+        }
         else
-            ResW25q_Verify(token);
-        return;
+        {
+            FsW25qFilInfo_t info;
+            ret = FsW25q_Stat(tok, &info);
+            if (ret == FS_W25Q_OK)
+                Uart_Printf("stat: %-15s off=0x%06lX len=%lu crc=0x%08lX\r\n",
+                            info.fname, info.offset, info.fsize, info.crc32);
+            else
+                Uart_FsRet("stat", tok, ret);
+        }
     }
-
-    if (strncmp(args, "gen", 3) == 0 && (args[3] == '\0' || args[3] == ' '))
+    else if (strcmp(tok, "rm") == 0)
     {
-        char num[16];
-
-        args += 3;
-        args = Uart_NextArg(args, token, sizeof(token));
-        if (args == NULL)
-        {
-            Uart_Printf("usage: part gen <name> <size>\r\n");
-            return;
-        }
-        args = Uart_NextArg(args, num, sizeof(num));
-
-        uint32_t size;
-        if (args == NULL || !Uart_ParseU32(num, &size) || size == 0)
-        {
-            Uart_Printf("usage: part gen <name> <size>\r\n");
-            return;
-        }
-        ResW25q_GenPattern(token, size);
-        return;
+        if (Uart_NextArg(rest, tok, sizeof(tok)) == NULL)
+            Uart_Printf("usage: fs rm <name>\r\n");
+        else
+            Uart_FsRet("rm", tok, FsW25q_Remove(tok));
     }
-
-    Uart_Printf("unknown: part %s\r\n", args);
+    else if (strcmp(tok, "chk") == 0)
+    {
+        if (Uart_NextArg(rest, tok, sizeof(tok)) == NULL)
+            Uart_Printf("usage: fs chk <name>\r\n");
+        else
+            Uart_FsChk(tok);
+    }
+    else if (strcmp(tok, "mk") == 0)
+    {
+        rest = Uart_NextArg(rest, tok, sizeof(tok));
+        if (rest == NULL || Uart_NextArg(rest, num, sizeof(num)) == NULL ||
+            !Uart_ParseU32(num, &v1) || v1 == 0)
+        {
+            Uart_Printf("usage: fs mk <name> <size>\r\n");
+        }
+        else
+        {
+            Uart_FsMk(tok, v1);
+        }
+    }
+    else if (strcmp(tok, "rd") == 0)
+    {
+        rest = Uart_NextArg(rest, tok, sizeof(tok));
+        if (rest != NULL)
+            rest = Uart_NextArg(rest, num, sizeof(num));
+        if (rest == NULL || !Uart_ParseU32(num, &v1))
+        {
+            Uart_Printf("usage: fs rd <name> <pos> [len]\r\n");
+        }
+        else
+        {
+            v2 = 32;
+            if (Uart_NextArg(rest, num, sizeof(num)) != NULL && !Uart_ParseU32(num, &v2))
+                v2 = 32;
+            Uart_FsRd(tok, v1, v2);
+        }
+    }
+    else
+    {
+        Uart_Printf("unknown: fs %s\r\n", tok);
+    }
 }
 
-/* Ymodem 接收命令：提示发送方后调用资源入库服务（接管串口→协议接收→W25Qxx 落盘→恢复） */
-static void Uart_CmdYmodem(void)
-{
-    Uart_Printf("ymodem: ready, start sender now (<=30s)...\r\n");
-    ResW25q_YmodemStore();
-}
+/* ========== 命令分发 ========== */
 
 /* 命令分发：结行（尾部 \r 已由调用方剥离）精确匹配，未命中命令镜像回显
  * line: 已终止的命令行 */
 static void Uart_CmdDispatch(const char *line)
 {
-    if (strcmp(line, "w25info") == 0)
+    if (strncmp(line, "fs", 2) == 0 && (line[2] == '\0' || line[2] == ' '))
     {
-        Uart_CmdW25Info();
-        return;
-    }
-
-    if (strcmp(line, "ym") == 0)
-    {
-        Uart_CmdYmodem();
-        return;
-    }
-
-    if (strncmp(line, "part", 4) == 0 && (line[4] == '\0' || line[4] == ' '))
-    {
-        Uart_CmdPart(line + 4);
+        Uart_CmdFs(line + 2);
         return;
     }
 
     Uart_Printf("[Rx] %s\r\n", line);
 }
 
-/* RX 任务：等信号量→取帧→按 \n 组行→命令分发（未知命令镜像 [Rx] 回显）。
- * 新增命令时在 Uart_CmdDispatch 中追加匹配分支 */
+/* RX 任务：等信号量→取帧→按 \n 组行→命令分发（未知命令镜像 [Rx] 回显） */
 void Uart_Proc(void *argument)
 {
     (void)argument;

@@ -12,11 +12,9 @@
 #define W25QXX_EXPECTED_TYPE_ID 0x40 /* 存储类型 ID（W25Qxx 系列） */
 
 /* ========== 超时时间配置（单位：ms） ========== */
-#define W25QXX_TIMEOUT_GENERIC      100   /* 通用操作超时（读、写） */
-#define W25QXX_TIMEOUT_SECTOR_ERASE 500   /* 扇区擦除超时（典型 40~400ms） */
-#define W25QXX_TIMEOUT_BLOCK_ERASE  1000  /* 块擦除超时 */
-#define W25QXX_TIMEOUT_CHIP_ERASE   90000 /* 整片擦除超时（典型 40~80 秒） */
-#define W25QXX_SPI_TIMEOUT          100   /* SPI 单字节超时（ms） */
+#define W25QXX_TIMEOUT_GENERIC      100 /* 通用操作超时（读、写） */
+#define W25QXX_TIMEOUT_SECTOR_ERASE 500 /* 扇区擦除超时（典型 40~400ms） */
+#define W25QXX_SPI_TIMEOUT          100 /* SPI 单字节超时（ms） */
 #define W25QXX_BULK_CHUNK_SIZE      4096U /* HAL 整块传输单次长度上限（长度字段 16 位，需分段） */
 #define W25QXX_BULK_BYTES_PER_MS    256U  /* 整块传输超时预算：保守吞吐下限（字节/ms），实测约 5MB/s */
 
@@ -27,6 +25,11 @@ static uint8_t W25QXX_CheckAddr(uint32_t addr, uint32_t len);
 static W25QXXErr_t W25QXX_ReadStatus1Checked(uint8_t *sr1);
 static uint8_t W25QXX_CheckProtected(void);
 static W25QXXErr_t W25QXX_WaitBusyTimeout(uint32_t timeout_ms);
+static uint32_t W25QXX_ReadID(void);
+static W25QXXErr_t W25QXX_WriteEnable(void);
+static W25QXXErr_t W25QXX_WriteDisable(void);
+static W25QXXErr_t W25QXX_WaitBusy(void);
+static W25QXXErr_t W25QXX_PageWrite(uint32_t addr, const uint8_t *buf, uint16_t len);
 
 /* ========== SPI 底层操作 ========== */
 
@@ -54,14 +57,13 @@ static HAL_StatusTypeDef W25QXX_SendCmdAddr(uint8_t cmd, uint32_t addr)
 
 /* ========== 内部辅助函数 ========== */
 
-/* 检查地址是否越界，0 = 越界, 1 = 合法 */
+/* 检查地址是否越界，0 = 越界, 1 = 合法
+ * 用 len > CHIP - addr 比较，避免 addr + len 在 uint32 回绕漏检 */
 static uint8_t W25QXX_CheckAddr(uint32_t addr, uint32_t len)
 {
-    if (len == 0)
-        return 1;
     if (addr >= W25QXX_CHIP_SIZE)
         return 0;
-    if (addr + len > W25QXX_CHIP_SIZE)
+    if (len > W25QXX_CHIP_SIZE - addr)
         return 0;
     return 1;
 }
@@ -92,11 +94,15 @@ static W25QXXErr_t W25QXX_ReadStatus1Checked(uint8_t *sr1)
     return (st == HAL_OK) ? W25QXX_OK : W25QXX_ERR_TIMEOUT;
 }
 
-/* 等待芯片空闲（带超时参数）
+/* 等待芯片空闲（紧凑轮询状态寄存器，超时按 HAL_GetTick 计时）
+ * 原每轮 HAL_Delay(1) 属忙等不让出 CPU，且把页编程 0.4~0.7ms 向上取整到 1~2ms，
+ * 改为连续轮询（单次状态读约 1~2us）可如实贴合芯片实际忙时
  * 返回: W25QXX_OK = 已空闲；W25QXX_ERR_TIMEOUT = 超时仍忙或 SPI 读取失败 */
 static W25QXXErr_t W25QXX_WaitBusyTimeout(uint32_t timeout_ms)
 {
-    for (uint32_t elapsed = 0; elapsed < timeout_ms; elapsed++)
+    uint32_t start = HAL_GetTick();
+
+    for (;;)
     {
         uint8_t sr1;
         W25QXXErr_t ret = W25QXX_ReadStatus1Checked(&sr1);
@@ -104,9 +110,9 @@ static W25QXXErr_t W25QXX_WaitBusyTimeout(uint32_t timeout_ms)
             return ret;
         if (!(sr1 & W25QXX_SR1_BUSY))
             return W25QXX_OK;
-        HAL_Delay(1);
+        if ((HAL_GetTick() - start) >= timeout_ms)
+            return W25QXX_ERR_TIMEOUT;
     }
-    return W25QXX_ERR_TIMEOUT;
 }
 
 /* ========== 初始化与信息读取 ========== */
@@ -161,7 +167,7 @@ void W25QXX_GetInfo(W25QXXInfo_t *info)
 }
 
 /* 读取芯片 JEDEC ID，返回 24 位 ID（制造商 | 存储类型 | 容量），SPI 失败返回 0 */
-uint32_t W25QXX_ReadID(void)
+static uint32_t W25QXX_ReadID(void)
 {
     uint8_t id[3];
     W25QXX_CS_LOW();
@@ -174,57 +180,10 @@ uint32_t W25QXX_ReadID(void)
     return ((uint32_t)id[0] << 16) | ((uint32_t)id[1] << 8) | id[2];
 }
 
-/* ========== 状态寄存器操作 ========== */
-
-/* 读取状态寄存器 1（SPI 失败返回 0xFF：BUSY 位置 1，使 WaitBusy 如实报超时） */
-uint8_t W25QXX_ReadStatus1(void)
-{
-    uint8_t sta;
-    if (W25QXX_ReadStatus1Checked(&sta) != W25QXX_OK)
-        return 0xFF;
-    return sta;
-}
-
-/* 读取状态寄存器 2（SPI 失败返回 0xFF） */
-uint8_t W25QXX_ReadStatus2(void)
-{
-    W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_READ_STATUS2, NULL);
-    uint8_t sta = 0xFF;
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW(0xFF, &sta);
-    W25QXX_CS_HIGH();
-    return (st == HAL_OK) ? sta : 0xFF;
-}
-
-/* 读取状态寄存器 3（SPI 失败返回 0xFF） */
-uint8_t W25QXX_ReadStatus3(void)
-{
-    W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_READ_STATUS3, NULL);
-    uint8_t sta = 0xFF;
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW(0xFF, &sta);
-    W25QXX_CS_HIGH();
-    return (st == HAL_OK) ? sta : 0xFF;
-}
-
-/* 检查芯片是否忙碌，0 = 空闲, 1 = 忙碌 */
-uint8_t W25QXX_IsBusy(void)
-{
-    return (W25QXX_ReadStatus1() & W25QXX_SR1_BUSY) ? 1 : 0;
-}
-
-/* 检查写使能状态，0 = 未使能, 1 = 已使能 */
-uint8_t W25QXX_IsWriteEnabled(void)
-{
-    return (W25QXX_ReadStatus1() & W25QXX_SR1_WEL) ? 1 : 0;
-}
-
 /* ========== 写使能与等待 ========== */
 
 /* 写使能（任何写入/擦除操作前必须调用） */
-W25QXXErr_t W25QXX_WriteEnable(void)
+static W25QXXErr_t W25QXX_WriteEnable(void)
 {
     W25QXX_CS_LOW();
     HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_WRITE_EN, NULL);
@@ -233,7 +192,7 @@ W25QXXErr_t W25QXX_WriteEnable(void)
 }
 
 /* 写禁止 */
-W25QXXErr_t W25QXX_WriteDisable(void)
+static W25QXXErr_t W25QXX_WriteDisable(void)
 {
     W25QXX_CS_LOW();
     HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_WRITE_DIS, NULL);
@@ -242,7 +201,7 @@ W25QXXErr_t W25QXX_WriteDisable(void)
 }
 
 /* 等待芯片空闲（使用默认超时时间 W25QXX_TIMEOUT_GENERIC） */
-W25QXXErr_t W25QXX_WaitBusy(void)
+static W25QXXErr_t W25QXX_WaitBusy(void)
 {
     return W25QXX_WaitBusyTimeout(W25QXX_TIMEOUT_GENERIC);
 }
@@ -285,7 +244,7 @@ W25QXXErr_t W25QXX_Read(uint32_t addr, uint8_t *buf, uint32_t len)
 /* 页写入（单次最多 256 字节）
  * 如果数据跨页，硬件会自动回绕到页首，可能导致数据覆盖，
  * 调用者应使用 W25QXX_Write() 处理跨页 */
-W25QXXErr_t W25QXX_PageWrite(uint32_t addr, const uint8_t *buf, uint16_t len)
+static W25QXXErr_t W25QXX_PageWrite(uint32_t addr, const uint8_t *buf, uint16_t len)
 {
     /* 参数检查 */
     if (buf == NULL || len == 0)
@@ -400,95 +359,6 @@ W25QXXErr_t W25QXX_SectorErase(uint32_t addr)
 
     /* 扇区擦除典型时间：40~400ms，使用 500ms 超时 */
     return W25QXX_WaitBusyTimeout(W25QXX_TIMEOUT_SECTOR_ERASE);
-}
-
-/* 块擦除（32KB），addr 为块内任意地址（自动对齐到 32KB 块首地址） */
-W25QXXErr_t W25QXX_BlockErase32K(uint32_t addr)
-{
-    /* 地址越界检查（先查原始地址，避免对齐回绕漏检） */
-    if (addr >= W25QXX_CHIP_SIZE)
-        return W25QXX_ERR_ADDR;
-
-    /* 自动对齐到 32KB 块首地址 */
-    uint32_t block_addr = W25QXX_BLOCK_32K_ALIGN(addr);
-
-    /* 检查写保护 */
-    if (W25QXX_CheckProtected())
-        return W25QXX_ERR_PROTECTED;
-
-    W25QXXErr_t ret = W25QXX_WriteEnable();
-    if (ret != W25QXX_OK)
-        return ret;
-
-    W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_BLOCK_ERASE_32K, NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((block_addr >> 16) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((block_addr >> 8) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)(block_addr & 0xFF), NULL);
-    W25QXX_CS_HIGH();
-    if (st != HAL_OK)
-        return W25QXX_ERR_TIMEOUT;
-
-    /* 块擦除典型时间：200~2000ms，使用 1000ms 超时 */
-    return W25QXX_WaitBusyTimeout(W25QXX_TIMEOUT_BLOCK_ERASE);
-}
-
-/* 块擦除（64KB），addr 为块内任意地址（自动对齐到 64KB 块首地址） */
-W25QXXErr_t W25QXX_BlockErase64K(uint32_t addr)
-{
-    /* 地址越界检查（先查原始地址，避免对齐回绕漏检） */
-    if (addr >= W25QXX_CHIP_SIZE)
-        return W25QXX_ERR_ADDR;
-
-    /* 自动对齐到 64KB 块首地址 */
-    uint32_t block_addr = W25QXX_BLOCK_ALIGN(addr);
-
-    /* 检查写保护 */
-    if (W25QXX_CheckProtected())
-        return W25QXX_ERR_PROTECTED;
-
-    W25QXXErr_t ret = W25QXX_WriteEnable();
-    if (ret != W25QXX_OK)
-        return ret;
-
-    W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_BLOCK_ERASE_64K, NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((block_addr >> 16) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)((block_addr >> 8) & 0xFF), NULL);
-    if (st == HAL_OK)
-        st = W25QXX_SPI_RW((uint8_t)(block_addr & 0xFF), NULL);
-    W25QXX_CS_HIGH();
-    if (st != HAL_OK)
-        return W25QXX_ERR_TIMEOUT;
-
-    /* 块擦除典型时间：200~2000ms，使用 1000ms 超时 */
-    return W25QXX_WaitBusyTimeout(W25QXX_TIMEOUT_BLOCK_ERASE);
-}
-
-/* 整片擦除（需要较长时间，典型值 40~80 秒） */
-W25QXXErr_t W25QXX_ChipErase(void)
-{
-    /* 检查写保护 */
-    if (W25QXX_CheckProtected())
-        return W25QXX_ERR_PROTECTED;
-
-    W25QXXErr_t ret = W25QXX_WriteEnable();
-    if (ret != W25QXX_OK)
-        return ret;
-
-    W25QXX_CS_LOW();
-    HAL_StatusTypeDef st = W25QXX_SPI_RW(W25QXX_CHIP_ERASE, NULL);
-    W25QXX_CS_HIGH();
-    if (st != HAL_OK)
-        return W25QXX_ERR_TIMEOUT;
-
-    /* 整片擦除超时时间：90 秒 */
-    return W25QXX_WaitBusyTimeout(W25QXX_TIMEOUT_CHIP_ERASE);
 }
 
 /* ========== 电源管理 ========== */
