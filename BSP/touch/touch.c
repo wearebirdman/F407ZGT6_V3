@@ -20,11 +20,11 @@
 #endif
 
 /*
- * 校准数据 EEPROM 存储布局（共 17 字节）：
- * magic(4) | xfac(4) | yfac(4) | xoff(2) | yoff(2) | swap(1)
+ * 校准记录序列化布局（共 13 字节，经 AT24Cxx 记录层保存）：
+ * xfac(4) | yfac(4) | xoff(2) | yoff(2) | swap(1)
+ * 完整性与掉电保护由记录层 CRC + A/B 双分区负责，本模块不再自带 magic/地址
  */
-#define TOUCH_CAL_MAGIC 0x544F4348u /* "TOCH" */
-#define TOUCH_CAL_SIZE  17
+#define TOUCH_CAL_SIZE 13
 
 /* ========== 触摸状态定义 ========== */
 typedef enum {
@@ -380,13 +380,10 @@ TouchErr_t Touch_SaveCalibration(void)
 {
     uint8_t buf[TOUCH_CAL_SIZE];
     uint8_t idx = 0;
-    uint32_t magic = TOUCH_CAL_MAGIC;
 
     if (!s_Cal.valid)
         return TOUCH_ERR_CAL;
 
-    memcpy(&buf[idx], &magic, 4);
-    idx += 4;
     memcpy(&buf[idx], &s_Cal.xfac, 4);
     idx += 4;
     memcpy(&buf[idx], &s_Cal.yfac, 4);
@@ -397,27 +394,27 @@ TouchErr_t Touch_SaveCalibration(void)
     idx += 2;
     buf[idx] = s_Cal.swap;
 
-    if (TOUCH_EEPROM_WRITE(TOUCH_CAL_EEPROM_ADDR, buf, TOUCH_CAL_SIZE) != TOUCH_EEPROM_OK)
+    if (AT24Cxx_SaveRecord(buf, TOUCH_CAL_SIZE) != AT24CXX_OK)
         return TOUCH_ERR_EEPROM;
 
     return TOUCH_OK;
 }
 
-/* 从 AT24Cxx 加载校准参数，TOUCH_ERR_CAL 表示尚未校准 */
+/* 从 AT24Cxx 记录层加载校准参数，TOUCH_ERR_CAL 表示未校准过或记录布局不符 */
 TouchErr_t Touch_LoadCalibration(void)
 {
     uint8_t buf[TOUCH_CAL_SIZE];
     uint8_t idx = 0;
-    uint32_t magic = 0;
+    uint16_t len = 0;
     TouchCal_t cal;
 
-    if (TOUCH_EEPROM_READ(TOUCH_CAL_EEPROM_ADDR, buf, TOUCH_CAL_SIZE) != TOUCH_EEPROM_OK)
-        return TOUCH_ERR_EEPROM;
-
-    memcpy(&magic, &buf[idx], 4);
-    idx += 4;
-    if (magic != TOUCH_CAL_MAGIC)
+    AT24CxxErr_t ret = AT24Cxx_LoadRecord(buf, sizeof(buf), &len);
+    if (ret == AT24CXX_ERR_NOT_FOUND)
         return TOUCH_ERR_CAL; /* 未校准过 */
+    if (ret != AT24CXX_OK)
+        return TOUCH_ERR_EEPROM;
+    if (len != TOUCH_CAL_SIZE)
+        return TOUCH_ERR_CAL; /* 旧版布局记录，视为未校准，需重新校准 */
 
     memcpy(&cal.xfac, &buf[idx], 4);
     idx += 4;

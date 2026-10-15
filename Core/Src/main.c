@@ -22,6 +22,7 @@
 #include "can.h"
 #include "crc.h"
 #include "dma.h"
+#include "fatfs.h"
 #include "i2c.h"
 #include "rtc.h"
 #include "sdio.h"
@@ -109,6 +110,7 @@ int main(void)
   MX_RTC_Init();
   MX_SDIO_SD_Init();
   MX_SPI1_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */

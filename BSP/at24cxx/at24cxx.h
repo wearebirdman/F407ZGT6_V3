@@ -68,22 +68,19 @@
 #error "Please define AT24C02 or other model in at24cxx.h"
 #endif
 
-/* 常用地址宏 */
-#define AT24CXX_TEST_ADDR 0x00 /* 测试地址 */
-
 /*
- * EEPROM 数据分配表：所有模块的持久化数据地址统一由本表管理
- * （容量预算小、重叠代价高，集中一张表才能一眼看出冲突）。
- * 新增数据区时：
- * 1. 在此定义 ADDR / SIZE
- * 2. 各外设头文件只引用本表宏，不自行拍地址
- * 当前分配：
- * 0x00 ~ 0x0F  测试区（AT24Cxx_Example，16 字节）
- * 0x28 ~ 0x38  触摸校准参数（17 字节）
- * 空闲起始：   0x39
+ * 记录层存储模型（A/B 双分区，掉电安全）：整片对半划分为两个记录槽，
+ * 由 AT24Cxx_SaveRecord/LoadRecord 统一管理，调用方不接触任何存储地址。
+ * 槽结构：[magic 4B][seq 4B][len 2B][crc32 4B][数据 ≤ AT24CXX_REC_DATA_MAX]
+ * 写入：数据先落非活动槽、头部最后写（seq=历史最大值+1）——任一步掉电时
+ *       旧活动槽始终完整，半写的槽由 CRC 校验兜底识别；
+ * 读取：双槽各自验 CRC，取 seq 大的有效槽；皆无效返回 AT24CXX_ERR_NOT_FOUND。
+ * 模型限制：当前为单记录（整片一份数据，触摸校准是唯一使用者）；
+ *           将来出现第二类持久化数据时扩展记录 id，禁止绕过本层手写地址读写。
  */
-#define EEPROM_ADDR_TOUCH_CAL 40 /* 触摸校准参数起始地址 */
-#define EEPROM_SIZE_TOUCH_CAL 17 /* 触摸校准参数长度 */
+#define AT24CXX_SLOT_SIZE    (AT24CXX_CHIP_SIZE / 2U) /* 单记录槽容量（字节） */
+#define AT24CXX_REC_HDR_SIZE 14U                      /* 记录头：magic+seq+len+crc32 */
+#define AT24CXX_REC_DATA_MAX (AT24CXX_SLOT_SIZE - AT24CXX_REC_HDR_SIZE) /* 单记录数据上限 */
 
 /* 示例代码开关 */
 #define AT24CXX_ENABLE_EXAMPLE 0 /* 1=启用示例代码，0=停用 */
@@ -95,6 +92,7 @@ typedef enum {
     AT24CXX_ERR_TIMEOUT, /* 超时（写周期等待超时） */
     AT24CXX_ERR_ADDR,    /* 地址越界 */
     AT24CXX_ERR_PARAM,   /* 参数错误 */
+    AT24CXX_ERR_NOT_FOUND, /* 无有效记录（从未保存或双槽皆损坏） */
 } AT24CxxErr_t;
 
 /* 芯片信息结构体 */
@@ -109,8 +107,12 @@ typedef struct {
 AT24CxxErr_t AT24Cxx_Init(void);                                              /* 初始化（检测设备在位） */
 void AT24Cxx_GetInfo(AT24CxxInfo_t *info);                                    /* 获取芯片信息 */
 AT24CxxErr_t AT24Cxx_Read(uint16_t addr, uint8_t *buf, uint16_t len);         /* 读取数据 */
-AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len);    /* 页写入（单次最多一页） */
-AT24CxxErr_t AT24Cxx_Write(uint16_t addr, uint8_t *buf, uint16_t len);        /* 写入数据（自动处理跨页） */
+AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, const uint8_t *buf, uint16_t len); /* 页写入（单次最多一页） */
+AT24CxxErr_t AT24Cxx_Write(uint16_t addr, const uint8_t *buf, uint16_t len);     /* 写入数据（自动处理跨页） */
+
+/* 记录层接口（A/B 双分区，掉电安全；持久化数据统一走这组 API，不直接用地址读写数据区） */
+AT24CxxErr_t AT24Cxx_SaveRecord(const uint8_t *data, uint16_t len);          /* 保存记录：写非活动槽并提交，旧记录自动保留为备份 */
+AT24CxxErr_t AT24Cxx_LoadRecord(uint8_t *data, uint16_t buf_max, uint16_t *out_len); /* 读出最新有效记录，*out_len 为记录长度 */
 #if AT24CXX_ENABLE_EXAMPLE
 void AT24Cxx_Example(void);                                                   /* 使用示例 */
 #endif

@@ -15,13 +15,9 @@
 /* 校准参数存储配置 */
 #define TOUCH_USE_EEPROM_CAL 1 /* 1 = 存入 EEPROM，需工程中存在 EEPROM 模块 */
 
-/* EEPROM 访问抽象宏（移植到其他存储介质时只需替换这 4 个宏，存储地址统一引用 at24cxx.h 的分配表） */
+/* EEPROM 持久化：统一走 AT24Cxx 记录层（A/B 双分区，掉电安全），触摸不接触存储地址 */
 #if TOUCH_USE_EEPROM_CAL
 #include "at24cxx.h"
-#define TOUCH_EEPROM_OK             AT24CXX_OK
-#define TOUCH_EEPROM_WRITE(a, b, l) AT24Cxx_Write((a), (b), (l))
-#define TOUCH_EEPROM_READ(a, b, l)  AT24Cxx_Read((a), (b), (l))
-#define TOUCH_CAL_EEPROM_ADDR       EEPROM_ADDR_TOUCH_CAL /* 校准参数起始地址 */
 #endif
 
 /* 引脚配置宏（软件 SPI 与硬件 SPI 共用 CS / PEN 引脚） */

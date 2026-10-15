@@ -9,11 +9,20 @@
 #define AT24CXX_I2C_TIMEOUT      100                              /* I2C 超时时间（ms） */
 #define AT24CXX_WRITE_TIMEOUT    10                               /* 写周期等待超时（典型最大 5ms，留余量） */
 #define AT24CXX_DEV_CHECK_TRIALS 3                                /* 检测设备应答重试次数 */
+#define AT24CXX_REC_MAGIC        0x52454331U /* 记录头标识 "REC1" */
+#define AT24CXX_CRC32_POLY       0xEDB88320U /* IEEE 802.3 反射式多项式 */
+#define AT24CXX_CRC32_INIT       0xFFFFFFFFU /* 流式累积初值 */
 
 /* ========== 内部函数声明 ========== */
 static uint8_t AT24CXX_CheckDevice(void);
 static AT24CxxErr_t AT24Cxx_WaitWriteComplete(void);
 static uint8_t AT24Cxx_CheckAddr(uint16_t addr, uint16_t len);
+static uint32_t AT24Cxx_Crc32Update(uint32_t crc, const uint8_t *data, uint16_t len);
+static uint16_t AT24Cxx_SlotBase(uint8_t idx);
+static uint8_t AT24Cxx_VerifySlot(uint8_t idx, uint32_t *seq, uint16_t *len);
+
+/* ========== 内部变量 ========== */
+static uint8_t s_RecBuf[AT24CXX_REC_DATA_MAX]; /* 记录校验分块读暂存 */
 
 /* 检测设备是否存在（发送设备地址，检查ACK），1 = 存在, 0 = 不存在 */
 static uint8_t AT24CXX_CheckDevice(void)
@@ -99,7 +108,7 @@ AT24CxxErr_t AT24Cxx_Read(uint16_t addr, uint8_t *buf, uint16_t len)
 /* 页写入（单次最多 AT24CXX_PAGE_SIZE 字节）
  * 如果数据跨页，硬件会自动回绕到页首，可能导致数据覆盖，
  * 建议使用 AT24Cxx_Write() 处理跨页写入 */
-AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len)
+AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, const uint8_t *buf, uint16_t len)
 {
     /* 参数检查 */
     if (buf == NULL || len == 0)
@@ -122,7 +131,7 @@ AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len)
                                                  AT24CXX_WRITE_ADDR,
                                                  addr,
                                                  AT24CXX_MEMADD_SIZE,
-                                                 buf,
+                                                 (uint8_t *)buf, /* HAL 形参非 const，驱动内唯一转换点 */
                                                  len,
                                                  AT24CXX_I2C_TIMEOUT);
     if (status != HAL_OK)
@@ -134,11 +143,11 @@ AT24CxxErr_t AT24Cxx_PageWrite(uint16_t addr, uint8_t *buf, uint16_t len)
 
 /* 任意地址写入任意长度数据（自动处理跨页）
  * 自动将数据拆分为多次页写入，处理页边界，每次页写入后等待写周期完成 */
-AT24CxxErr_t AT24Cxx_Write(uint16_t addr, uint8_t *buf, uint16_t len)
+AT24CxxErr_t AT24Cxx_Write(uint16_t addr, const uint8_t *buf, uint16_t len)
 {
     uint16_t remaining = len;
     uint16_t current_addr = addr;
-    uint8_t *current_buf = buf;
+    const uint8_t *current_buf = buf;
 
     /* 参数检查 */
     if (buf == NULL || len == 0)
@@ -176,16 +185,179 @@ AT24CxxErr_t AT24Cxx_Write(uint16_t addr, uint8_t *buf, uint16_t len)
     return AT24CXX_OK;
 }
 
+/* ========== 记录层（A/B 双分区，掉电安全） ========== */
+
+/* CRC32（IEEE 反射式）流式更新 */
+static uint32_t AT24Cxx_Crc32Update(uint32_t crc, const uint8_t *data, uint16_t len)
+{
+    for (uint16_t i = 0; i < len; i++)
+    {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8U; bit++)
+        {
+            if (crc & 1U)
+                crc = (crc >> 1) ^ AT24CXX_CRC32_POLY;
+            else
+                crc >>= 1;
+        }
+    }
+    return crc;
+}
+
+/* 取记录槽起始地址（idx = 0/1） */
+static uint16_t AT24Cxx_SlotBase(uint8_t idx)
+{
+    return (uint16_t)((uint32_t)idx * AT24CXX_SLOT_SIZE);
+}
+
+/* 读槽头并校验 magic/长度/CRC，1 = 有效
+ * idx: 槽号; seq/len: 输出头字段 */
+static uint8_t AT24Cxx_VerifySlot(uint8_t idx, uint32_t *seq, uint16_t *len)
+{
+    uint8_t hdr[AT24CXX_REC_HDR_SIZE];
+    uint16_t base = AT24Cxx_SlotBase(idx);
+    uint32_t magic = 0;
+    uint32_t stored_crc = 0;
+
+    if (AT24Cxx_Read(base, hdr, sizeof(hdr)) != AT24CXX_OK)
+        return 0;
+
+    memcpy(&magic, &hdr[0], 4);
+    memcpy(seq, &hdr[4], 4);
+    memcpy(len, &hdr[8], 2);
+    memcpy(&stored_crc, &hdr[10], 4);
+
+    if (magic != AT24CXX_REC_MAGIC || *len == 0 || *len > AT24CXX_REC_DATA_MAX)
+        return 0;
+
+    /* CRC 覆盖头前 10 字节与全部数据，分块流式读取 */
+    uint32_t crc = AT24CXX_CRC32_INIT;
+    crc = AT24Cxx_Crc32Update(crc, hdr, 10);
+    uint16_t remaining = *len;
+    uint16_t off = 0;
+    while (remaining > 0)
+    {
+        uint16_t chunk = (remaining > sizeof(s_RecBuf)) ? sizeof(s_RecBuf) : remaining;
+        if (AT24Cxx_Read(base + AT24CXX_REC_HDR_SIZE + off, s_RecBuf, chunk) != AT24CXX_OK)
+            return 0;
+        crc = AT24Cxx_Crc32Update(crc, s_RecBuf, chunk);
+        off += chunk;
+        remaining -= chunk;
+    }
+    crc ^= 0xFFFFFFFFU;
+
+    return (crc == stored_crc) ? 1 : 0;
+}
+
+/* 保存记录（A/B 双分区提交）：数据先写非活动槽、头部最后写作为提交点
+ * 任一步掉电旧活动槽都完整；旧记录所在槽成为下一次写入的目标（自动轮转）
+ * data/len: 记录内容（len ≤ AT24CXX_REC_DATA_MAX） */
+AT24CxxErr_t AT24Cxx_SaveRecord(const uint8_t *data, uint16_t len)
+{
+    if (data == NULL || len == 0 || len > AT24CXX_REC_DATA_MAX)
+        return AT24CXX_ERR_PARAM;
+
+    uint32_t seq_a = 0;
+    uint32_t seq_b = 0;
+    uint16_t tmp_len = 0;
+    uint8_t valid_a = AT24Cxx_VerifySlot(0, &seq_a, &tmp_len);
+    uint8_t valid_b = AT24Cxx_VerifySlot(1, &seq_b, &tmp_len);
+
+    /* 目标槽 = 活动槽对面；序号 = 历史最大 + 1；双槽无效从槽 0 起新 */
+    uint8_t next;
+    uint32_t seq;
+    if (valid_a && (!valid_b || seq_a >= seq_b))
+    {
+        next = 1;
+        seq = seq_a + 1U;
+    }
+    else if (valid_b)
+    {
+        next = 0;
+        seq = seq_b + 1U;
+    }
+    else
+    {
+        next = 0;
+        seq = 1U;
+    }
+
+    uint16_t base = AT24Cxx_SlotBase(next);
+
+    /* 1. 数据先落非活动槽（此刻掉电 → 旧活动槽仍有效） */
+    AT24CxxErr_t ret = AT24Cxx_Write(base + AT24CXX_REC_HDR_SIZE, data, len);
+    if (ret != AT24CXX_OK)
+        return ret;
+
+    /* 2. 头部最后写 = 提交点（CRC 覆盖头前 10 字节与数据） */
+    uint8_t hdr[AT24CXX_REC_HDR_SIZE];
+    uint32_t magic = AT24CXX_REC_MAGIC;
+    memcpy(&hdr[0], &magic, 4);
+    memcpy(&hdr[4], &seq, 4);
+    memcpy(&hdr[8], &len, 2);
+
+    uint32_t crc = AT24CXX_CRC32_INIT;
+    crc = AT24Cxx_Crc32Update(crc, hdr, 10);
+    crc = AT24Cxx_Crc32Update(crc, data, len);
+    crc ^= 0xFFFFFFFFU;
+    memcpy(&hdr[10], &crc, 4);
+
+    return AT24Cxx_Write(base, hdr, sizeof(hdr));
+}
+
+/* 读出最新有效记录：双槽各验 CRC 取 seq 大者
+ * data/buf_max: 输出缓冲及容量; out_len: 实际记录长度
+ * 返回: OK / NOT_FOUND 从未保存或双槽皆无效 / PARAM 记录长于缓冲（布局不符）
+ *       / DEVICE 读失败 */
+AT24CxxErr_t AT24Cxx_LoadRecord(uint8_t *data, uint16_t buf_max, uint16_t *out_len)
+{
+    if (data == NULL || out_len == NULL)
+        return AT24CXX_ERR_PARAM;
+
+    uint32_t seq_a = 0;
+    uint32_t seq_b = 0;
+    uint16_t len_a = 0;
+    uint16_t len_b = 0;
+    uint8_t valid_a = AT24Cxx_VerifySlot(0, &seq_a, &len_a);
+    uint8_t valid_b = AT24Cxx_VerifySlot(1, &seq_b, &len_b);
+
+    if (!valid_a && !valid_b)
+        return AT24CXX_ERR_NOT_FOUND;
+
+    uint8_t winner;
+    uint16_t len;
+    if (valid_a && (!valid_b || seq_a >= seq_b))
+    {
+        winner = 0;
+        len = len_a;
+    }
+    else
+    {
+        winner = 1;
+        len = len_b;
+    }
+
+    if (len > buf_max)
+        return AT24CXX_ERR_PARAM;
+
+    if (AT24Cxx_Read(AT24Cxx_SlotBase(winner) + AT24CXX_REC_HDR_SIZE, data, len) != AT24CXX_OK)
+        return AT24CXX_ERR_DEVICE;
+
+    *out_len = len;
+    return AT24CXX_OK;
+}
+
 /* ========== 使用示例 ========== */
 #if AT24CXX_ENABLE_EXAMPLE
 
-/* AT24CXX 使用示例，展示完整的读写流程：
- * 初始化芯片 -> 获取芯片信息 -> 写入数据（自动跨页）-> 读取数据 -> 验证数据 */
+/* AT24CXX 使用示例，展示记录层完整流程：
+ * 初始化芯片 -> 获取芯片信息 -> 保存记录（A/B 双分区）-> 读出记录 -> 验证数据 */
 void AT24Cxx_Example(void)
 {
     /* 测试数据 */
     uint8_t write_buf[] = "Hello AT24CXX!";
     uint8_t read_buf[sizeof(write_buf)];
+    uint16_t out_len = 0;
     AT24CxxInfo_t info;
     AT24CxxErr_t ret;
 
@@ -206,29 +378,29 @@ void AT24Cxx_Example(void)
     printf("Page Count:     %lu\r\n", info.page_count);
     printf("==================================\r\n\r\n");
 
-    /* 3. 写入数据（使用跨页写入函数） */
-    printf("Writing %zu bytes to address 0x%04X...\r\n", sizeof(write_buf), AT24CXX_TEST_ADDR);
-    ret = AT24Cxx_Write(AT24CXX_TEST_ADDR, write_buf, sizeof(write_buf));
+    /* 3. 保存记录（内部自动 A/B 轮转，掉电安全） */
+    printf("Saving record %zu bytes...\r\n", sizeof(write_buf));
+    ret = AT24Cxx_SaveRecord(write_buf, sizeof(write_buf));
     if (ret != AT24CXX_OK)
     {
-        printf("Write Failed! Error: %d\r\n", ret);
+        printf("SaveRecord Failed! Error: %d\r\n", ret);
         return;
     }
-    printf("Write OK!\r\n\r\n");
+    printf("SaveRecord OK!\r\n\r\n");
 
-    /* 4. 读取数据 */
+    /* 4. 读出记录 */
     memset(read_buf, 0, sizeof(read_buf));
-    printf("Reading %zu bytes from address 0x%04X...\r\n", sizeof(read_buf), AT24CXX_TEST_ADDR);
-    ret = AT24Cxx_Read(AT24CXX_TEST_ADDR, read_buf, sizeof(read_buf));
+    printf("Loading record...\r\n");
+    ret = AT24Cxx_LoadRecord(read_buf, sizeof(read_buf), &out_len);
     if (ret != AT24CXX_OK)
     {
-        printf("Read Failed! Error: %d\r\n", ret);
+        printf("LoadRecord Failed! Error: %d\r\n", ret);
         return;
     }
-    printf("Read OK!\r\n\r\n");
+    printf("LoadRecord OK! len=%u\r\n\r\n", out_len);
 
     /* 5. 验证数据 */
-    if (memcmp(write_buf, read_buf, sizeof(write_buf)) == 0)
+    if (out_len == sizeof(write_buf) && memcmp(write_buf, read_buf, out_len) == 0)
     {
         printf("Data verified OK!\r\n");
         printf("Written: \"%s\"\r\n", write_buf);
@@ -237,8 +409,6 @@ void AT24Cxx_Example(void)
     else
     {
         printf("Data verification FAILED!\r\n");
-        printf("Written: \"%s\"\r\n", write_buf);
-        printf("Read:    \"%s\"\r\n", read_buf);
     }
 }
 

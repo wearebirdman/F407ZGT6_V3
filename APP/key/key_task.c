@@ -1,6 +1,7 @@
 #include "key_task.h"
 #include "key.h"
 #include "led.h"
+#include "usart.h"
 
 #define KEY_SCAN_PERIOD_MS  10  /* 按键扫描周期（ms） */
 
@@ -26,6 +27,7 @@ void Key_Proc(void *argument)
         case KEY_1_ID:
             if (key_msg.event == KEY_EVENT_SHORT_PRESS)
             {
+                Uart_Printf("KEY_1_SHORT_PRESS\n");
                 /* 按键1短按：向 LedQueue 发送翻转 LED1 请求，由 Led_Disp 任务消费执行 */
                 LedMsg_t led_msg = {LED_1_ID, LED_TOGGLE};
                 osMessageQueuePut(LedQueueHandle, &led_msg, 0, 0); /* 满则丢 */
@@ -34,6 +36,7 @@ void Key_Proc(void *argument)
         case KEY_2_ID:
             if (key_msg.event == KEY_EVENT_SHORT_PRESS)
             {
+                Uart_Printf("KEY_2_SHORT_PRESS\n");
                 /* 按键2短按：向 LedQueue 发送翻转 LED2 请求，由 Led_Disp 任务消费执行 */
                 LedMsg_t led_msg = {LED_2_ID, LED_TOGGLE};
                 osMessageQueuePut(LedQueueHandle, &led_msg, 0, 0); /* 满则丢 */
@@ -42,6 +45,7 @@ void Key_Proc(void *argument)
         case KEY_3_ID:
             if (key_msg.event == KEY_EVENT_SHORT_PRESS)
             {
+                Uart_Printf("KEY_3_SHORT_PRESS\n");
                 /* 按键3短按：向 LedQueue 发送翻转 LED3 请求，由 Led_Disp 任务消费执行 */
                 LedMsg_t led_msg = {LED_3_ID, LED_TOGGLE};
                 osMessageQueuePut(LedQueueHandle, &led_msg, 0, 0); /* 满则丢 */

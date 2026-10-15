@@ -10,6 +10,7 @@ srcDirs:
   - APP
   - SVC
   - Middlewares
+  - FATFS
 virtualFolder:
   name: <virtual_root>
   files: []
@@ -56,6 +57,9 @@ targets:
         - Middlewares/LVGL/lvgl/include
         - Middlewares/LVGL/lvgl/demos/widgets
         - SVC/fs
+        - FATFS/App
+        - FATFS/Target
+        - Middlewares/Third_Party/FatFs/src
       libList: []
     excludeList: []
     settings:
