@@ -45,7 +45,7 @@
 #define ETHIF_TX_TIMEOUT (2000U)
 /* USER CODE BEGIN OS_THREAD_STACK_SIZE_WITH_RTOS */
 /* Stack size of the interface thread */
-#define INTERFACE_THREAD_STACK_SIZE ( 350 )
+#define INTERFACE_THREAD_STACK_SIZE ( 1024 )
 /* USER CODE END OS_THREAD_STACK_SIZE_WITH_RTOS */
 /* Network interface name */
 #define IFNAME0 's'
@@ -61,6 +61,9 @@
 /* PHY 基本模式状态寄存器（BSR）：bit2 = Link Status */
 #define ETHIF_PHY_BSR             1U
 #define ETHIF_PHY_BSR_LINK_MASK   (1U << 2)
+/* LAN8720 特殊控制/状态寄存器（SCSR）：bits[4:2] = 自协商速率/双工指示 */
+#define ETHIF_PHY_SCSR            0x1FU
+#define ETHIF_PHY_SCSR_HCD_MASK   (7U << 2)
 
 /* ETH 底层资源初始化：CubeMX 已将 eth.c 移出编译，此强定义覆盖 HAL 弱函数，
    负责时钟/GPIO/NVIC（原 Core/Src/eth.c 内容 + 中断使能） */
@@ -75,18 +78,20 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
 
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
 
-  /**ETH GPIO Configuration
+  /**ETH GPIO Configuration（以官方例程实测引脚为准）
     PC1     ------> ETH_MDC
     PA1     ------> ETH_REF_CLK
     PA2     ------> ETH_MDIO
     PA7     ------> ETH_CRS_DV
     PC4     ------> ETH_RXD0
     PC5     ------> ETH_RXD1
-    PB11     ------> ETH_TX_EN
-    PB12     ------> ETH_TXD0
-    PB13     ------> ETH_TXD1
+    PG11    ------> ETH_TX_EN
+    PG13    ------> ETH_TXD0
+    PG14    ------> ETH_TXD1
+    PF7     ------> PHY nRST（LAN8720 硬件复位，低有效）
     */
   GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -102,12 +107,24 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_13;
+  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_13|GPIO_PIN_14;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+
+  /* LAN8720 硬件复位脚 PF7：拉低 50ms 复位 PHY，再拉高释放，
+     释放后等待 PHY 就绪（MDIO 可用至少需 25ms，取 100ms 裕量） */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_7, GPIO_PIN_RESET);
+  HAL_Delay(50);
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_7, GPIO_PIN_SET);
+  HAL_Delay(100);
 
   /* ETH 中断：ISR 中调用 osSemaphoreRelease，优先级数值必须 >=
      configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY(5) */
@@ -215,6 +232,42 @@ void HAL_ETH_ErrorCallback(ETH_HandleTypeDef *handlerEth)
 
 /* USER CODE BEGIN 4 */
 
+/* 按 LAN8720 SCSR 自协商结果同步 MAC 速率/双工。
+   HAL_ETH_Init 硬编码 100M 全双工，与 PHY 实际协商可能不一致，link up 后必须同步 */
+static void EthIf_SyncMacSpeedDuplex(uint32_t scsr)
+{
+  ETH_MACConfigTypeDef mac_conf;
+
+  if (HAL_ETH_GetMACConfig(&heth, &mac_conf) != HAL_OK)
+  {
+    return;
+  }
+
+  /* SCSR bits[4:2]：001=10HD，101=10FD，010=100HD，110=100FD */
+  switch (scsr & ETHIF_PHY_SCSR_HCD_MASK)
+  {
+    case (1U << 2):
+      mac_conf.Speed = ETH_SPEED_10M;
+      mac_conf.DuplexMode = ETH_HALFDUPLEX_MODE;
+      break;
+    case (5U << 2):
+      mac_conf.Speed = ETH_SPEED_10M;
+      mac_conf.DuplexMode = ETH_FULLDUPLEX_MODE;
+      break;
+    case (2U << 2):
+      mac_conf.Speed = ETH_SPEED_100M;
+      mac_conf.DuplexMode = ETH_HALFDUPLEX_MODE;
+      break;
+    case (6U << 2):
+      mac_conf.Speed = ETH_SPEED_100M;
+      mac_conf.DuplexMode = ETH_FULLDUPLEX_MODE;
+      break;
+    default:
+      return; /* 保留值/未协商完成，不改动 MAC 配置 */
+  }
+
+  (void)HAL_ETH_SetMACConfig(&heth, &mac_conf);
+}
 /* USER CODE END 4 */
 
 /*******************************************************************************
@@ -595,8 +648,10 @@ void ethernet_link_thread(void* argument)
 /* USER CODE BEGIN ETH link init */
     struct netif *netif = (struct netif *)argument;
     uint32_t phy_bsr = 0U;
+    uint32_t phy_scsr = 0U;
     uint8_t link_up = 0U;
     uint8_t link_last = 0xFFU; /* 0xFF 保证首轮必定执行一次 link 状态上报 */
+    uint8_t phy_addr = ETHIF_PHY_ADDR; /* 运行时变量：MDIO 读失败时在 0/1 间切换重试 */
 /* USER CODE END ETH link init */
 
   for(;;)
@@ -604,7 +659,7 @@ void ethernet_link_thread(void* argument)
 
 /* USER CODE BEGIN ETH link Thread core code for User BSP */
     /* 通过 MDIO 读 PHY BSR，检测链路通断并上报协议栈 */
-    if (HAL_ETH_ReadPHYRegister(&heth, ETHIF_PHY_ADDR, ETHIF_PHY_BSR, &phy_bsr) == HAL_OK)
+    if (HAL_ETH_ReadPHYRegister(&heth, phy_addr, ETHIF_PHY_BSR, &phy_bsr) == HAL_OK)
     {
       link_up = ((phy_bsr & ETHIF_PHY_BSR_LINK_MASK) != 0U) ? 1U : 0U;
 
@@ -614,6 +669,11 @@ void ethernet_link_thread(void* argument)
 
         if (link_up != 0U)
         {
+          /* link up：先读 SCSR 同步 MAC 速率/双工，再上报协议栈 */
+          if (HAL_ETH_ReadPHYRegister(&heth, phy_addr, ETHIF_PHY_SCSR, &phy_scsr) == HAL_OK)
+          {
+            EthIf_SyncMacSpeedDuplex(phy_scsr);
+          }
           netif_set_link_up(netif);
         }
         else
@@ -621,6 +681,11 @@ void ethernet_link_thread(void* argument)
           netif_set_link_down(netif);
         }
       }
+    }
+    else
+    {
+      /* MDIO 读失败：PHY 地址可能不符，0/1 间切换下轮重试 */
+      phy_addr = (phy_addr == 0U) ? 1U : 0U;
     }
 /* USER CODE END ETH link Thread core code for User BSP */
 

@@ -28,6 +28,7 @@
 #include "key.h"
 #include "led.h"
 #include "touch.h"
+#include "net_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,6 +49,13 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
+/* Net_Task 任务句柄与属性（USER CODE 区定义，CubeMX 重生成不丢） */
+osThreadId_t Net_TaskHandle;
+const osThreadAttr_t Net_Task_attributes = {
+  .name = "Net_Task",
+  .stack_size = 1536,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -195,7 +203,8 @@ void MX_FREERTOS_Init(void) {
   Uart_Proc_TaskHandle = osThreadNew(Uart_Proc, NULL, &Uart_Proc_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* 以太网 TCP 服务器任务（APP/net/net_task.c） */
+  Net_TaskHandle = osThreadNew(Net_Task, NULL, &Net_Task_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -314,6 +323,20 @@ __weak void Uart_Proc(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+/* 栈溢出钩子（configCHECK_FOR_STACK_OVERFLOW=1）：故障上下文禁止互斥锁打印，直接进 Error_Handler */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+  (void)xTask;
+  (void)pcTaskName;
+  Error_Handler();
+}
+
+/* 堆分配失败钩子（configUSE_MALLOC_FAILED_HOOK=1）：同上，直接进 Error_Handler */
+void vApplicationMallocFailedHook(void)
+{
+  Error_Handler();
+}
 
 /* USER CODE END Application */
 

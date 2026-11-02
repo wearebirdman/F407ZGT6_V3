@@ -11,6 +11,7 @@ srcDirs:
   - SVC
   - Middlewares
   - FATFS
+  - LWIP
 virtualFolder:
   name: <virtual_root>
   files: []
@@ -49,8 +50,25 @@ targets:
         - APP/lcd
         - APP/led
         - APP/lvgl
+        - APP/net
         - APP/touch
         - APP/uart
+        - LWIP/App
+        - LWIP/Target
+        - Middlewares/Third_Party/LwIP/src/include
+        - Middlewares/Third_Party/LwIP/system
+        - Middlewares/Third_Party/LwIP/src/include/netif/ppp
+        - Middlewares/Third_Party/LwIP/src/include/lwip
+        - Middlewares/Third_Party/LwIP/src/include/lwip/apps
+        - Middlewares/Third_Party/LwIP/src/include/lwip/priv
+        - Middlewares/Third_Party/LwIP/src/include/lwip/prot
+        - Middlewares/Third_Party/LwIP/src/include/netif
+        - Middlewares/Third_Party/LwIP/src/include/compat/posix
+        - Middlewares/Third_Party/LwIP/src/include/compat/posix/arpa
+        - Middlewares/Third_Party/LwIP/src/include/compat/posix/net
+        - Middlewares/Third_Party/LwIP/src/include/compat/posix/sys
+        - Middlewares/Third_Party/LwIP/src/include/compat/stdc
+        - Middlewares/Third_Party/LwIP/system/arch
         - SVC/ymodem
         - Middlewares/LVGL
         - Middlewares/LVGL/lvgl
