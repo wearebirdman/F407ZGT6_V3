@@ -129,6 +129,7 @@ void Lcd_Disp(void *argument);
 void Touch_Proc(void *argument);
 void Uart_Proc(void *argument);
 
+extern void MX_LWIP_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
@@ -212,6 +213,8 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void *argument)
 {
+  /* init code for LWIP */
+  MX_LWIP_Init();
   /* USER CODE BEGIN StartDefaultTask */
   /* defaultTask 仅作占位无业务：立即注销自身，释放其栈与 TCB 内存 */
 

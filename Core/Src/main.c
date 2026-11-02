@@ -24,6 +24,7 @@
 #include "dma.h"
 #include "fatfs.h"
 #include "i2c.h"
+#include "lwip.h"
 #include "rtc.h"
 #include "sdio.h"
 #include "spi.h"
