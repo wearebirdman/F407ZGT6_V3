@@ -168,6 +168,8 @@ standard names. */
 /* 栈溢出检查（方式1：切出时校验栈指针）+ 堆分配失败钩子，钩子实现见 freertos.c USER CODE Application */
 #define configCHECK_FOR_STACK_OVERFLOW 1
 #define configUSE_MALLOC_FAILED_HOOK   1
+/* 任务栈高水位查询（diag 诊断命令用，无额外 RAM 开销） */
+#define INCLUDE_uxTaskGetStackHighWaterMark 1
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

@@ -60,6 +60,17 @@ static void Lvgl_TouchReadCb(lv_indev_t *indev, lv_indev_data_t *data)
 
 /* ========== 公共函数 ========== */
 
+/* 诊断：读取 LVGL 侧最近一次触摸状态（net diag 命令用） */
+void Lvgl_GetTouchState(uint16_t *x, uint16_t *y, uint8_t *down)
+{
+    if (x != NULL)
+        *x = s_TouchX;
+    if (y != NULL)
+        *y = s_TouchY;
+    if (down != NULL)
+        *down = s_TouchDown;
+}
+
 /* LVGL 移植初始化：核心初始化 + 显示/触摸设备注册，需在 Lcd_Init 之后调用 */
 void Lvgl_PortInit(void)
 {

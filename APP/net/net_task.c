@@ -1,15 +1,28 @@
 #include "net_task.h"
 #include "key.h"
 #include "led.h"
+#include "lvgl_port.h"
+#include "touch.h"
 #include "usart.h"
 
 #include <stdio.h>
 #include <string.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
 #include "lwip/api.h"
 #include "lwip/netif.h"
 
 extern struct netif gnetif; /* 定义于 LWIP/App/lwip.c（lwip.h 未导出 extern） */
+
+/* diag 诊断数据源：心跳计数（APP 任务内自增）与 RTOS 对象句柄（freertos.c） */
+extern volatile uint32_t g_TouchBeat;
+extern volatile uint32_t g_TouchEvtCnt;
+extern volatile uint32_t g_LvglBeat;
+extern osMessageQueueId_t TouchQueueHandle;
+extern osThreadId_t Touch_Proc_TaskHandle;
+extern osThreadId_t Lcd_Disp_TaskHandle;
+extern osThreadId_t Net_TaskHandle;
 
 #define NET_SERVER_PORT          5000 /* TCP 监听端口 */
 #define NET_RX_LINE_MAX          96   /* 单条命令长度上限（超长截断丢弃） */
@@ -108,6 +121,48 @@ static void Net_CmdLed(struct netconn *conn, const char *args)
         Net_SendStr(conn, "ERR led queue full\n");
 }
 
+/* diag 命令：上报 LVGL/触摸心跳、队列积压、任务栈水位（栈水位单位：字，值越小越危险） */
+static void Net_CmdDiag(struct netconn *conn)
+{
+    char tx_buf[NET_TX_BUF_MAX];
+    int len;
+    uint16_t touch_x = 0, touch_y = 0;
+    uint8_t touch_down = 0;
+    TouchCal_t cal;
+
+    Lvgl_GetTouchState(&touch_x, &touch_y, &touch_down);
+
+    len = snprintf(tx_buf, sizeof(tx_buf),
+                   "OK lvgl_beat=%lu touch_beat=%lu touch_evt=%lu tq_pending=%lu\n",
+                   g_LvglBeat, g_TouchBeat, g_TouchEvtCnt,
+                   (uint32_t)osMessageQueueGetCount(TouchQueueHandle));
+    if (len > 0)
+        netconn_write(conn, tx_buf, (size_t)len, NETCONN_COPY);
+
+    len = snprintf(tx_buf, sizeof(tx_buf),
+                   "OK hwm_words touch=%lu lcd=%lu net=%lu\n",
+                   (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)Touch_Proc_TaskHandle),
+                   (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)Lcd_Disp_TaskHandle),
+                   (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)Net_TaskHandle));
+    if (len > 0)
+        netconn_write(conn, tx_buf, (size_t)len, NETCONN_COPY);
+
+    len = snprintf(tx_buf, sizeof(tx_buf),
+                   "OK touch_state x=%u y=%u down=%u\n",
+                   (unsigned)touch_x, (unsigned)touch_y, (unsigned)touch_down);
+    if (len > 0)
+        netconn_write(conn, tx_buf, (size_t)len, NETCONN_COPY);
+
+    /* 触摸校准状态：valid=0 表示未校准，此时上报的 x/y 是原始 AD 值（0~4095） */
+    Touch_GetCalibration(&cal);
+    len = snprintf(tx_buf, sizeof(tx_buf),
+                   "OK touch_cal valid=%u swap=%u xfac=%d yfac=%d\n",
+                   (unsigned)cal.valid, (unsigned)cal.swap,
+                   (int)(cal.xfac * 1000), (int)(cal.yfac * 1000));
+    if (len > 0)
+        netconn_write(conn, tx_buf, (size_t)len, NETCONN_COPY);
+}
+
 /* keymon 命令：开关按键事件推送 */
 static void Net_CmdKeymon(struct netconn *conn, const char *args, uint8_t *keymon_on)
 {
@@ -145,8 +200,10 @@ static void Net_CmdDispatch(struct netconn *conn, char *cmd, uint8_t *keymon_on)
     }
     else if (strcmp(cmd, "status") == 0)
         Net_CmdStatus(conn);
+    else if (strcmp(cmd, "diag") == 0)
+        Net_CmdDiag(conn);
     else if (strcmp(cmd, "help") == 0)
-        Net_SendStr(conn, "OK cmds: help | status | led <1|2|3> <on|off|toggle> | echo <text> | keymon <on|off>\n");
+        Net_SendStr(conn, "OK cmds: help | status | diag | led <1|2|3> <on|off|toggle> | echo <text> | keymon <on|off>\n");
     else
         Net_SendStr(conn, "ERR unknown cmd, try 'help'\n");
 }
